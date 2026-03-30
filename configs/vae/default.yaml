@@ -1,0 +1,29 @@
+# VAE architecture and training configuration
+vae_arch:
+  latent_dim: 64                     # Latent vector dimensionality per position
+  embed_dim: 768                     # Internal embedding dim (match encoder)
+  num_layers: 4                      # Transformer layers in VAE encoder/decoder
+  num_heads: 8                       # Attention heads per layer
+  dropout: 0.1                       # Dropout rate
+  max_answer_len: 50                 # Max answer sequence length
+
+vae_training:
+  learning_rate: 1.0e-4              # Peak learning rate for AdamW
+  batch_size: 64                     # Samples per training batch
+  epochs: 30                         # Maximum training epochs
+  patience: 5                        # Early stopping patience (val loss)
+  warmup_steps: 500                  # LR warmup steps
+  weight_decay: 0.01                 # AdamW weight decay
+  grad_clip_max_norm: 1.0            # Max gradient norm
+  grad_accum_steps: 1                # Gradient accumulation steps
+  beta_start: 0.0                    # KL weight start (annealing)
+  beta_end: 1.0                      # KL weight end
+  beta_warmup_steps: 2000            # Steps to linearly ramp beta
+  val_every_n_steps: 500             # Validate every N steps
+
+quality_gate:
+  min_recon_accuracy: 0.85           # Min token-level reconstruction accuracy
+  min_mean_kl: 0.1                   # Min average KL to avoid posterior collapse
+  min_active_dims: 10                # Min latent dims with variance > threshold
+  min_centroid_distance: 0.5         # Min L2 between answerable/unanswerable centroids
+  active_dim_variance_threshold: 0.1 # Variance cutoff for "active" dimension

@@ -1,0 +1,27 @@
+# Denoiser architecture, noise schedule, and diffusion training
+denoiser_arch:
+  denoiser_dim: 512                  # Internal model dimension
+  num_layers: 6                      # Transformer blocks
+  num_heads: 8                       # Attention heads
+  ff_dim: 2048                       # Feed-forward dim (4x denoiser_dim)
+  dropout: 0.1                       # Dropout rate
+
+noise_schedule:
+  num_timesteps: 1000                # Total diffusion timesteps T
+  schedule_type: "cosine"            # "cosine" or "linear"
+  cosine_s: 0.008                    # Small offset for cosine schedule
+  prediction_type: "epsilon"         # Model predicts noise
+
+diffusion_training:
+  learning_rate: 1.0e-4              # Peak learning rate
+  batch_size: 128                    # Samples per training batch
+  epochs: 100                        # Maximum training epochs
+  warmup_steps: 1000                 # LR warmup steps
+  weight_decay: 0.01                 # AdamW weight decay
+  grad_clip_max_norm: 1.0            # Max gradient norm
+  grad_accum_steps: 1                # Gradient accumulation steps
+  ema_decay: 0.9999                  # EMA decay rate
+  ema_start_step: 1000               # Start EMA after this step
+  cfg_dropout_rate: 0.1              # Classifier-free guidance dropout rate
+  val_every_n_steps: 1000            # Validate every N steps
+  checkpoint_every_n_steps: 5000     # Save checkpoint every N steps

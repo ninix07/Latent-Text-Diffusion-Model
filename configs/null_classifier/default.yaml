@@ -1,0 +1,7 @@
+# Null answer classifier configuration
+null_classifier:
+  hidden_dim: 256                    # MLP hidden layer size
+  learning_rate: 1.0e-3              # Learning rate
+  epochs: 20                         # Training epochs
+  batch_size: 256                    # Batch size
+  threshold: 0.5                     # Default decision threshold (tuned via ROC)
