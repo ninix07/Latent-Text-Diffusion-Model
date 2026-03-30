@@ -50,8 +50,15 @@ def evaluate(
     ).to(device)
 
     vae_ckpt = load_checkpoint(vae_checkpoint)
-    vae = SequenceVAE(config.vae_arch)
-    vae.load_state_dict(vae_ckpt["model_state"])
+    try:
+        from transformers import AutoTokenizer as _AT
+        _tok = _AT.from_pretrained(config.encoder.model_name)
+        _vocab_size = len(_tok)
+    except Exception:
+        _vocab_size = 30522
+    _pretrained_emb = torch.randn(_vocab_size, config.vae_arch.embed_dim) * 0.02
+    vae = SequenceVAE(config.vae_arch, pretrained_embeddings=_pretrained_emb)
+    vae.load_state_dict(vae_ckpt["model_state_dict"])
     vae.to(device)
     vae.eval()
 
@@ -62,10 +69,18 @@ def evaluate(
         num_layers=config.denoiser_arch.num_layers,
         num_heads=config.denoiser_arch.num_heads,
         ff_dim=config.denoiser_arch.ff_dim,
-        max_seq_len=config.vae_arch.max_answer_len,
+        max_seq_len=config.vae_arch.max_answer_len + 1,
         dropout=config.denoiser_arch.dropout,
     )
-    denoiser.load_state_dict(diff_ckpt["model_state"])
+    # Checkpoint was saved with combined = ModuleList([denoiser, projection]),
+    # so keys are prefixed "0." for denoiser and "1." for projection.
+    combined_state = diff_ckpt["model_state_dict"]
+    denoiser.load_state_dict(
+        {k[2:]: v for k, v in combined_state.items() if k.startswith("0.")}
+    )
+    projection.load_state_dict(
+        {k[2:]: v for k, v in combined_state.items() if k.startswith("1.")}
+    )
     denoiser.to(device)
     denoiser.eval()
 
@@ -79,13 +94,14 @@ def evaluate(
 
     null_ckpt = load_checkpoint(null_classifier_checkpoint)
     null_clf = NullClassifier(config.vae_arch.latent_dim, config.null_classifier.hidden_dim)
-    null_clf.load_state_dict(null_ckpt["model_state"])
+    null_clf.load_state_dict(null_ckpt["model_state_dict"])
     null_clf.to(device)
     null_clf.eval()
 
     norm_stats = torch.load(
         Path(config.paths.latent_dir) / "normalization_stats.pt",
         map_location="cpu",
+        weights_only=True,
     )
 
     tokenizer = create_tokenizer(config.encoder.model_name)
@@ -106,15 +122,15 @@ def evaluate(
     _, val_loader = create_squad_dataloaders(config, tokenizer)
 
     predictions, references, pred_ans, true_ans = [], [], [], []
-    for i, batch in enumerate(val_loader):
-        if i * config.diffusion_training.batch_size >= max_examples:
+    for batch in val_loader:
+        if len(predictions) >= max_examples:
             break
         results = pipeline.generate_batch(batch)
         if isinstance(results, dict):
             results = [results]
         for j, r in enumerate(results):
             predictions.append(r["answer_text"])
-            references.append(batch.get("all_answers", [[""]]))
+            references.append(batch["all_answer_texts"][j] if "all_answer_texts" in batch else [""])
             pred_ans.append(r["is_answerable"])
             true_ans.append(bool(batch["is_answerable"][j].item()))
 
@@ -128,11 +144,17 @@ if __name__ == "__main__":
     import argparse
     logging.basicConfig(level=logging.INFO)
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default=None)
     parser.add_argument("--vae_checkpoint", required=True)
     parser.add_argument("--diffusion_checkpoint", required=True)
     parser.add_argument("--null_classifier_checkpoint", required=True)
     args = parser.parse_args()
-    cfg = Config()
+    if args.config is not None:
+        import yaml
+        with open(args.config) as f:
+            cfg = Config.from_dict(yaml.safe_load(f))
+    else:
+        cfg = Config()
     result = evaluate(cfg, args.vae_checkpoint, args.diffusion_checkpoint,
                       args.null_classifier_checkpoint)
     print(result)

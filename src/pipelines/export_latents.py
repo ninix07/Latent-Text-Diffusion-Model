@@ -96,7 +96,7 @@ def export_latents(
                 is_ans_list.append(is_ans.cpu())
 
         return {
-            "latents": torch.cat(latents_list, dim=0),
+            "latents_raw": torch.cat(latents_list, dim=0),
             "context_ids": torch.cat(context_ids_list, dim=0),
             "context_mask": torch.cat(context_mask_list, dim=0),
             "question_ids": torch.cat(question_ids_list, dim=0),
@@ -113,10 +113,20 @@ def export_latents(
     # ------------------------------------------------------------------ normalisation stats
     # Computed from train split only: mean/std per position per dim
     # latents shape: (N, L, D)
-    train_latents = train_data["latents"]
+    train_latents = train_data["latents_raw"]
     norm_mean = train_latents.mean(dim=0)   # (L, D)
     norm_std = train_latents.std(dim=0).clamp(min=1e-6)  # (L, D)
     norm_stats = {"mean": norm_mean, "std": norm_std}
+
+    # Apply normalisation and rename key to match LatentDataset expectation
+    def _normalize(data: dict) -> dict:
+        z_norm = (data["latents_raw"] - norm_mean) / norm_std
+        result = {"z_normalized": z_norm}
+        result.update({k: v for k, v in data.items() if k != "latents_raw"})
+        return result
+
+    train_data = _normalize(train_data)
+    val_data = _normalize(val_data)
 
     # ------------------------------------------------------------------ quality gate
     from src.pipelines.quality_gate import run_quality_gate

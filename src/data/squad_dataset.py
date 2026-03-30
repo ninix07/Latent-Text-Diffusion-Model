@@ -113,4 +113,5 @@ class SQuADDataset(Dataset):
             "answer_mask": answer_mask,
             "is_answerable": is_answerable,
             "answer_text": answer_text,
+            "all_answer_texts": all_answer_texts,
         }

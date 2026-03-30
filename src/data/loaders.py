@@ -58,11 +58,24 @@ def create_squad_dataloaders(
 def create_latent_dataloaders(
     config: Config,
 ) -> Tuple[DataLoader, DataLoader]:
-    """Placeholder for latent dataloaders (implemented in Branch 9).
+    """Create training and validation DataLoaders from precomputed latent files.
 
-    Will load precomputed latent vectors from ``config.paths.latent_dir``.
+    Loads from ``config.paths.latent_dir``.
     """
-    raise NotImplementedError(
-        f"LatentDataset not yet implemented. "
-        f"Latent dir: {config.paths.latent_dir}"
+    from src.data.latent_dataset import LatentDataset
+
+    train_ds = LatentDataset(config.paths.latent_dir, "train")
+    val_ds = LatentDataset(config.paths.latent_dir, "val")
+
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=config.diffusion_training.batch_size,
+        shuffle=True,
+        drop_last=True,
     )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=config.diffusion_training.batch_size,
+        shuffle=False,
+    )
+    return train_loader, val_loader

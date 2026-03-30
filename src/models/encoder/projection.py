@@ -70,7 +70,9 @@ class ConditioningProjection(nn.Module):
         proj_c = proj_c + seg_c
 
         # Concatenate along the sequence dimension.
+        # Invert from HuggingFace convention (1=real, 0=pad) to
+        # nn.MultiheadAttention key_padding_mask convention (True=ignore).
         conditioning = torch.cat([proj_q, proj_c], dim=1)
-        conditioning_mask = torch.cat([q_mask, c_mask], dim=1)
+        conditioning_mask = ~torch.cat([q_mask, c_mask], dim=1).bool()
 
         return conditioning, conditioning_mask

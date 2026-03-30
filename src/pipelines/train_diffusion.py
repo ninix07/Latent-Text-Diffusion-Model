@@ -221,15 +221,17 @@ def train_diffusion(
 
             # Forward + loss
             eps_pred = denoiser(z_t, t, conditioning, cond_mask)
-            loss = F.mse_loss(eps_pred, noise)
+            loss = F.mse_loss(eps_pred, noise) / cfg_d.grad_accum_steps
 
             # Backprop
-            optimizer.zero_grad()
             loss.backward()
-            grad_norm = clip_gradients(denoiser, cfg_d.grad_clip_max_norm)
             if accumulation_step(step, cfg_d.grad_accum_steps):
+                grad_norm = clip_gradients(combined, cfg_d.grad_clip_max_norm)
                 optimizer.step()
                 scheduler.step()
+                optimizer.zero_grad()
+            else:
+                grad_norm = 0.0
 
             ema.update(step)
 
@@ -311,6 +313,11 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default=None)
     args = parser.parse_args()
 
-    cfg = Config()
+    if args.config is not None:
+        import yaml
+        with open(args.config) as f:
+            cfg = Config.from_dict(yaml.safe_load(f))
+    else:
+        cfg = Config()
     result = train_diffusion(cfg)
     print("Final metrics:", result)

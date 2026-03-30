@@ -75,9 +75,13 @@ def beam_search_decode(
             beam_seqs = torch.cat([prev_seqs, new_tokens], dim=1)
             beam_scores = top_scores
 
-        # Return the best beam
+        # Return the best beam, truncated at first eos_id with remainder padded
         best = beam_scores.argmax()
-        results.append(beam_seqs[best])
+        best_seq = beam_seqs[best].clone()
+        eos_positions = (best_seq == eos_id).nonzero(as_tuple=True)[0]
+        if len(eos_positions) > 0:
+            best_seq[eos_positions[0].item() + 1:] = pad_id
+        results.append(best_seq)
 
     return torch.stack(results, dim=0)
 

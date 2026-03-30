@@ -142,16 +142,26 @@ class Config:
 
     @classmethod
     def from_dict(cls, d: dict) -> Config:
+        def _checked(dc_cls, data: dict) -> dict:
+            valid = {f.name for f in fields(dc_cls)}
+            unknown = set(data) - valid
+            if unknown:
+                raise ValueError(
+                    f"Unknown keys for {dc_cls.__name__}: {sorted(unknown)}. "
+                    f"Valid keys: {sorted(valid)}"
+                )
+            return data
+
         return cls(
             seed=d.get("seed", 42),
-            paths=PathConfig(**d.get("paths", {})),
-            encoder=EncoderConfig(**d.get("encoder", {})),
-            vae_arch=VAEArchConfig(**d.get("vae_arch", {})),
-            vae_training=VAETrainingConfig(**d.get("vae_training", {})),
-            quality_gate=QualityGateConfig(**d.get("quality_gate", {})),
-            denoiser_arch=DenoiserArchConfig(**d.get("denoiser_arch", {})),
-            noise_schedule=NoiseScheduleConfig(**d.get("noise_schedule", {})),
-            diffusion_training=DiffusionTrainingConfig(**d.get("diffusion_training", {})),
-            null_classifier=NullClassifierConfig(**d.get("null_classifier", {})),
-            inference=InferenceConfig(**d.get("inference", {})),
+            paths=PathConfig(**_checked(PathConfig, d.get("paths", {}))),
+            encoder=EncoderConfig(**_checked(EncoderConfig, d.get("encoder", {}))),
+            vae_arch=VAEArchConfig(**_checked(VAEArchConfig, d.get("vae_arch", {}))),
+            vae_training=VAETrainingConfig(**_checked(VAETrainingConfig, d.get("vae_training", {}))),
+            quality_gate=QualityGateConfig(**_checked(QualityGateConfig, d.get("quality_gate", {}))),
+            denoiser_arch=DenoiserArchConfig(**_checked(DenoiserArchConfig, d.get("denoiser_arch", {}))),
+            noise_schedule=NoiseScheduleConfig(**_checked(NoiseScheduleConfig, d.get("noise_schedule", {}))),
+            diffusion_training=DiffusionTrainingConfig(**_checked(DiffusionTrainingConfig, d.get("diffusion_training", {}))),
+            null_classifier=NullClassifierConfig(**_checked(NullClassifierConfig, d.get("null_classifier", {}))),
+            inference=InferenceConfig(**_checked(InferenceConfig, d.get("inference", {}))),
         )

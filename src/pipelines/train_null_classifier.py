@@ -231,6 +231,11 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default=None)
     args = parser.parse_args()
 
-    cfg = Config()
+    if args.config is not None:
+        import yaml
+        with open(args.config) as f:
+            cfg = Config.from_dict(yaml.safe_load(f))
+    else:
+        cfg = Config()
     result = train_null_classifier(cfg)
     print("Final metrics:", result)

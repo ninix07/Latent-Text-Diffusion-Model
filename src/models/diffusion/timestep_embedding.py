@@ -27,7 +27,7 @@ class SinusoidalTimestepEmbedding(nn.Module):
         assert dim % 2 == 0, "Embedding dim must be even."
         half = dim // 2
         # log-spaced frequencies: exp(-log(10000) * i / (half - 1))
-        freq = torch.exp(-math.log(10_000.0) * torch.arange(half, dtype=torch.float32) / (half - 1))
+        freq = torch.exp(-math.log(10_000.0) * torch.arange(half, dtype=torch.float32) / max(half - 1, 1))
         self.register_buffer("freq", freq)  # (half,)
 
     def forward(self, t: Tensor) -> Tensor:

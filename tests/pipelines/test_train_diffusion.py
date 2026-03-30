@@ -60,7 +60,7 @@ def test_one_epoch_runs(tiny_config: Config):
     assert isinstance(result, dict)
 
 
-def test_loss_is_mse(tiny_config: Config):
+def test_loss_is_mse(tiny_config: Config, monkeypatch):
     """Loss value should be a finite scalar."""
     cfg = _replace(
         tiny_config,
@@ -82,13 +82,9 @@ def test_loss_is_mse(tiny_config: Config):
         losses.append(loss.item())
         return loss
 
-    import torch.nn.functional as F
-    F.mse_loss = _track_mse
-    try:
-        train_diffusion(cfg, device=torch.device("cpu"),
-                        train_loader=loader, val_loader=None)
-    finally:
-        F.mse_loss = orig_mse
+    monkeypatch.setattr(td_mod.F, "mse_loss", _track_mse)
+    train_diffusion(cfg, device=torch.device("cpu"),
+                    train_loader=loader, val_loader=None)
 
     assert len(losses) > 0
     assert all(torch.isfinite(torch.tensor(l)) for l in losses)

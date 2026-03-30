@@ -61,7 +61,7 @@ class CFGSampler:
 
         # Build null (unconditional) conditioning
         null_cond = torch.zeros_like(conditioning)
-        null_mask = torch.zeros_like(conditioning_mask)
+        null_mask = torch.ones_like(conditioning_mask).bool()
 
         # Stack conditioned and unconditioned in the batch dimension
         z_double = torch.cat([z_t, z_t], dim=0)           # (2B, seq_len, latent_dim)

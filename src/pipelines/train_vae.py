@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Optional
 
 import torch
@@ -13,6 +14,7 @@ from src.models.vae.loss import compute_beta
 from src.training.ema import EMAManager
 from src.training.optimizer import create_optimizer, create_scheduler
 from src.training.grad_utils import clip_gradients, accumulation_step
+from src.training.checkpoint import save_checkpoint
 from src.utils.logging import init_wandb, log_wandb, finish_wandb
 
 logger = logging.getLogger(__name__)
@@ -74,8 +76,6 @@ def train_vae(
 
     # ------------------------------------------------------------------ model
     # Build a tiny embedding table to infer vocab size without loading BERT
-    from src.data.tokenization import create_tokenizer as _ct
-
     try:
         from transformers import AutoTokenizer
 
@@ -192,6 +192,20 @@ def train_vae(
                 if val_metrics["total"] < best_val_loss:
                     best_val_loss = val_metrics["total"]
                     patience_counter = 0
+                    ckpt_path = (
+                        Path(config.paths.checkpoint_dir) / "vae_best.pt"
+                    )
+                    save_checkpoint(
+                        path=ckpt_path,
+                        model=vae,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        ema=ema,
+                        config=config,
+                        step=global_step,
+                        metrics=val_metrics,
+                    )
+                    logger.info("Saved VAE checkpoint: %s", ckpt_path)
                 else:
                     patience_counter += 1
 
@@ -219,6 +233,18 @@ def train_vae(
         if val_metrics["total"] < best_val_loss:
             best_val_loss = val_metrics["total"]
             patience_counter = 0
+            ckpt_path = Path(config.paths.checkpoint_dir) / "vae_best.pt"
+            save_checkpoint(
+                path=ckpt_path,
+                model=vae,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                ema=ema,
+                config=config,
+                step=global_step,
+                metrics=val_metrics,
+            )
+            logger.info("Saved VAE checkpoint: %s", ckpt_path)
         else:
             patience_counter += 1
 
@@ -231,7 +257,6 @@ def train_vae(
 
 
 if __name__ == "__main__":
-    import logging
     from src.config.loader import create_config_from_cli
 
     logging.basicConfig(level=logging.INFO)

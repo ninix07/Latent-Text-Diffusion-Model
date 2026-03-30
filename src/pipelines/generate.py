@@ -66,7 +66,7 @@ class GenerationPipeline:
         z_shape = (B, L, D)
 
         def denoiser_fn(z_t, t_tensor):
-            return self.sampler.denoiser(z_t, t_tensor, conditioning, cond_mask)
+            return self.sampler.predict_noise(z_t, t_tensor, conditioning, cond_mask)
 
         z0_normalized = self.sampler.ddim.sample(denoiser_fn, z_shape, device)
 
@@ -88,6 +88,8 @@ class GenerationPipeline:
             z0, mask,
             strategy=strategy,
             beam_width=self.config.inference.beam_width,
+            pad_id=self.tokenizer.pad_token_id,
+            eos_id=self.tokenizer.eos_token_id,
         )
 
         # 6. Detokenize
