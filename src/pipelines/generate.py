@@ -59,7 +59,7 @@ class GenerationPipeline:
             h_q, question_mask.bool(), h_c, context_mask.bool()
         )
 
-        # 2. DDIM sampling
+        # 2. DDIM sampling (with optional best-of-N)
         B = context_ids.size(0)
         L = self.config.vae_arch.max_answer_len
         D = self.config.vae_arch.latent_dim
@@ -68,20 +68,26 @@ class GenerationPipeline:
         def denoiser_fn(z_t, t_tensor):
             return self.sampler.predict_noise(z_t, t_tensor, conditioning, cond_mask)
 
-        z0_normalized = self.sampler.ddim.sample(denoiser_fn, z_shape, device)
-
-        # 3. Denormalize
+        # 3. Denormalize helper
         mean = self.norm_mean.to(device)
         std = self.norm_std.to(device)
-        z0 = z0_normalized * std + mean
 
-        # 4. Null classification
-        confidence = self.null_classifier(z0)  # (B,)
+        n_samples = self.config.inference.best_of_n
+        if n_samples > 1:
+            from src.models.sampler.best_of_n import best_of_n_sample
+
+            def _generate_z0() -> torch.Tensor:
+                return self.sampler.ddim.sample(denoiser_fn, z_shape, device) * std + mean
+
+            z0, confidence = best_of_n_sample(_generate_z0, n_samples, self.null_classifier)
+        else:
+            z0 = self.sampler.ddim.sample(denoiser_fn, z_shape, device) * std + mean
+            confidence = self.null_classifier(z0)  # (B,)
         threshold = self.config.null_classifier.threshold
         is_answerable = (confidence >= threshold).tolist()
         confidence_vals = confidence.tolist()
 
-        # 5. VAE decode → token IDs
+        # 4. VAE decode → token IDs
         mask = torch.ones(B, L, dtype=torch.long, device=device)
         strategy = self.config.inference.decoding_strategy
         token_ids = self.vae.decode_to_tokens(
@@ -92,7 +98,7 @@ class GenerationPipeline:
             eos_id=self.tokenizer.eos_token_id,
         )
 
-        # 6. Detokenize
+        # 5. Detokenize
         results = []
         for i in range(B):
             ans_bool = bool(is_answerable[i]) if isinstance(is_answerable, list) else bool(is_answerable)
@@ -104,7 +110,7 @@ class GenerationPipeline:
                 text = ""
             results.append({"answer_text": text, "is_answerable": ans_bool, "confidence": conf})
 
-        return results[0] if B == 1 else results
+        return results
 
     @torch.no_grad()
     def generate_batch(self, batch: dict) -> list[dict]:

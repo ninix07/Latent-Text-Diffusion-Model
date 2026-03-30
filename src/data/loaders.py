@@ -4,12 +4,26 @@ from __future__ import annotations
 
 from typing import Tuple
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, default_collate
 
 from src.config.schema import Config
 from src.data.tokenization import create_tokenizer
 from src.data.squad_dataset import SQuADDataset
 from src.data.sampler import create_balanced_sampler
+
+# Fields that contain plain strings or variable-length lists of strings —
+# default_collate cannot handle these (it requires equal-length sequences).
+_SQUAD_STR_KEYS = {"answer_text", "all_answer_texts"}
+
+
+def _squad_collate(batch):
+    """Collate SQuAD samples, keeping string fields as plain Python lists."""
+    str_batch = {k: [sample[k] for sample in batch] for k in _SQUAD_STR_KEYS if k in batch[0]}
+    tensor_batch = default_collate(
+        [{k: v for k, v in sample.items() if k not in _SQUAD_STR_KEYS} for sample in batch]
+    )
+    tensor_batch.update(str_batch)
+    return tensor_batch
 
 
 def create_squad_dataloaders(
@@ -44,6 +58,7 @@ def create_squad_dataloaders(
         sampler=train_sampler,
         num_workers=0,
         drop_last=True,
+        collate_fn=_squad_collate,
     )
     val_loader = DataLoader(
         val_ds,
@@ -51,6 +66,7 @@ def create_squad_dataloaders(
         shuffle=False,
         num_workers=0,
         drop_last=False,
+        collate_fn=_squad_collate,
     )
     return train_loader, val_loader
 

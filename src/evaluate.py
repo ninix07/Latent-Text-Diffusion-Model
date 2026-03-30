@@ -89,8 +89,7 @@ def evaluate(
         cosine_s=config.noise_schedule.cosine_s,
     ).to(device)
     ddim = DDIMSampler(schedule, config.inference.num_inference_steps, config.inference.eta)
-    cfg_sampler = CFGSampler(denoiser, guidance_scale=config.inference.guidance_scale)
-    cfg_sampler.ddim = ddim
+    cfg_sampler = CFGSampler(denoiser, guidance_scale=config.inference.guidance_scale, ddim=ddim)
 
     null_ckpt = load_checkpoint(null_classifier_checkpoint)
     null_clf = NullClassifier(config.vae_arch.latent_dim, config.null_classifier.hidden_dim)
@@ -126,8 +125,6 @@ def evaluate(
         if len(predictions) >= max_examples:
             break
         results = pipeline.generate_batch(batch)
-        if isinstance(results, dict):
-            results = [results]
         for j, r in enumerate(results):
             predictions.append(r["answer_text"])
             references.append(batch["all_answer_texts"][j] if "all_answer_texts" in batch else [""])

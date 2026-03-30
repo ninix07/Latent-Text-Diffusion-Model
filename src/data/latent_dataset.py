@@ -44,38 +44,47 @@ class LatentDataset(Dataset):
 
     def __init__(self, latent_dir: str, split: str) -> None:
         path = Path(latent_dir) / f"latent_dataset_{split}.pt"
-        raw = torch.load(path, map_location="cpu", weights_only=False)
+        raw = torch.load(path, map_location="cpu", weights_only=True)
 
-        # Accept either a list of dicts or a single dict of lists/tensors.
+        # Accept either a list of dicts or a single dict of stacked tensors.
         if isinstance(raw, list):
-            self._data: list[dict[str, Tensor]] = raw
+            # Legacy list-of-dicts format — validate keys on first sample.
+            if len(raw) == 0:
+                raise ValueError(f"Latent dataset at '{path}' is empty.")
+            missing = self._REQUIRED_KEYS - set(raw[0].keys())
+            if missing:
+                raise ValueError(
+                    f"Latent dataset is missing required keys: {sorted(missing)}"
+                )
+            self._stacked: dict[str, Tensor] | None = None
+            self._list: list[dict[str, Tensor]] = raw
+            self._n: int = len(raw)
         elif isinstance(raw, dict):
-            # Dict-of-tensors format: each value has shape (N, ...)
-            n = len(next(iter(raw.values())))
-            self._data = [{k: raw[k][i] for k in raw} for i in range(n)]
+            # Dict-of-tensors format: each value has shape (N, ...).
+            # Index on-the-fly to avoid materialising N individual dicts.
+            if len(raw) == 0 or len(next(iter(raw.values()))) == 0:
+                raise ValueError(f"Latent dataset at '{path}' is empty.")
+            missing = self._REQUIRED_KEYS - set(raw.keys())
+            if missing:
+                raise ValueError(
+                    f"Latent dataset is missing required keys: {sorted(missing)}"
+                )
+            self._stacked = raw
+            self._list = []
+            self._n = len(next(iter(raw.values())))
         else:
             raise ValueError(
                 f"Unsupported latent dataset format: {type(raw)}.  "
                 "Expected a list of dicts or a dict of tensors."
             )
 
-        if len(self._data) == 0:
-            raise ValueError(f"Latent dataset at '{path}' is empty.")
-
-        # Validate keys on the first sample
-        first_keys = set(self._data[0].keys())
-        missing = self._REQUIRED_KEYS - first_keys
-        if missing:
-            raise ValueError(
-                f"Latent dataset is missing required keys: {sorted(missing)}"
-            )
-
     # ------------------------------------------------------------------
 
     def __len__(self) -> int:
-        return len(self._data)
+        return self._n
 
     def __getitem__(self, idx: int) -> dict[str, Tensor]:
-        sample = self._data[idx]
-        # Return a shallow copy so callers cannot mutate the stored data.
+        if self._stacked is not None:
+            return {k: self._stacked[k][idx] for k in self._stacked}
+        sample = self._list[idx]
         return {k: v for k, v in sample.items()}

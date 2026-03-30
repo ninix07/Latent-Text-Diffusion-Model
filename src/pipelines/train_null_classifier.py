@@ -45,7 +45,12 @@ def _evaluate(
 
     with torch.no_grad():
         for batch in val_loader:
-            z, labels = batch[0].to(device), batch[1].to(device)
+            if isinstance(batch, (list, tuple)):
+                z = batch[0].to(device)
+                labels = batch[1].to(device).float()
+            else:
+                z = batch["z_normalized"].to(device)
+                labels = batch["is_answerable"].to(device).float()
             probs = model(z)
             all_probs.append(probs.cpu())
             all_labels.append(labels.cpu())

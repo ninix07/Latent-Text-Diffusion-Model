@@ -131,7 +131,7 @@ def export_latents(
     # ------------------------------------------------------------------ quality gate
     from src.pipelines.quality_gate import run_quality_gate
 
-    passed, report = run_quality_gate(vae, val_loader, config, device)
+    passed, report = run_quality_gate(vae, val_loader, saved_cfg, device)
     if not passed:
         failed = [k for k, v in report.items() if not v["passed"]]
         raise RuntimeError(

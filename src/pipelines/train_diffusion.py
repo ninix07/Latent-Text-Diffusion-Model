@@ -53,6 +53,9 @@ def _validate(
     projection.eval()
     total_loss = 0.0
     n = 0
+    # Fixed-seed generator so validation MSE is deterministic across calls.
+    rng = torch.Generator(device=device)
+    rng.manual_seed(0)
     with torch.no_grad():
         for batch in val_loader:
             z0 = batch["z_normalized"].to(device)
@@ -61,8 +64,8 @@ def _validate(
             h_q, q_mask, h_c, c_mask = _encode_batch(encoder, batch, device)
             conditioning, cond_mask = projection(h_q, q_mask.bool(), h_c, c_mask.bool())
 
-            t = torch.randint(0, schedule.num_timesteps, (B,), device=device)
-            noise = torch.randn_like(z0)
+            t = torch.randint(0, schedule.num_timesteps, (B,), device=device, generator=rng)
+            noise = torch.randn(z0.shape, device=device, generator=rng)
             z_t = q_sample(z0, t, schedule, noise)
 
             eps_pred = denoiser(z_t, t, conditioning, cond_mask)
@@ -230,15 +233,14 @@ def train_diffusion(
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
+                ema.update(step)
             else:
                 grad_norm = 0.0
-
-            ema.update(step)
 
             # ---- wandb: train metrics ----
             log_wandb(
                 {
-                    "train/mse_loss": loss.item(),
+                    "train/mse_loss": loss.item() * cfg_d.grad_accum_steps,
                     "train/grad_norm": (
                         grad_norm if isinstance(grad_norm, float) else float(grad_norm)
                     ),

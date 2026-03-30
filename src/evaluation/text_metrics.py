@@ -83,5 +83,8 @@ def compute_bleu(
         )
         return {}
 
+    if not predictions:
+        return {"bleu": 0.0}
+
     result = sacrebleu.corpus_bleu(predictions, [references])
     return {"bleu": result.score}

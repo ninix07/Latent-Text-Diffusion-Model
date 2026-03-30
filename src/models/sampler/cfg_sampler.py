@@ -22,11 +22,15 @@ class CFGSampler:
     guidance_scale : float
         CFG weight *w*. At w=0, output equals unconditional prediction.
         At w=1, output equals conditional prediction.
+    ddim : DDIMSampler, optional
+        Sampler used by GenerationPipeline to draw latents. Required at
+        inference time; may be left as None during training.
     """
 
-    def __init__(self, denoiser: ConditionalDenoiser, guidance_scale: float) -> None:
+    def __init__(self, denoiser: ConditionalDenoiser, guidance_scale: float, ddim=None) -> None:
         self.denoiser = denoiser
         self.guidance_scale = guidance_scale
+        self.ddim = ddim
 
     # ------------------------------------------------------------------
     def predict_noise(

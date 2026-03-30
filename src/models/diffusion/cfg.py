@@ -10,7 +10,7 @@ import torch
 from torch import Tensor
 
 
-def cfg_dropout_mask(batch_size: int, rate: float) -> Tensor:
+def cfg_dropout_mask(batch_size: int, rate: float, device: torch.device | None = None) -> Tensor:
     """Generate a per-sample boolean mask for CFG dropout.
 
     Parameters
@@ -19,13 +19,15 @@ def cfg_dropout_mask(batch_size: int, rate: float) -> Tensor:
         Number of samples.
     rate : float
         Probability of dropping a sample's conditioning.
+    device : torch.device, optional
+        Device for the returned mask. Should match the conditioning tensor.
 
     Returns
     -------
     BoolTensor
         Shape ``(batch_size,)``. ``True`` means drop (zero out) that sample.
     """
-    return torch.rand(batch_size) < rate
+    return torch.rand(batch_size, device=device) < rate
 
 
 def apply_cfg_dropout(
@@ -50,7 +52,7 @@ def apply_cfg_dropout(
         Modified conditioning and mask with dropped samples zeroed out
         and their masks set to ``True`` (ignored).
     """
-    drop = cfg_dropout_mask(conditioning.size(0), dropout_rate)  # (B,)
+    drop = cfg_dropout_mask(conditioning.size(0), dropout_rate, device=conditioning.device)  # (B,)
     conditioning = conditioning.clone()
     conditioning_mask = conditioning_mask.clone()
 
