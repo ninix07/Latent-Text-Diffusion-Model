@@ -64,7 +64,9 @@ def _validate(
             h_q, q_mask, h_c, c_mask = _encode_batch(encoder, batch, device)
             conditioning, cond_mask = projection(h_q, q_mask.bool(), h_c, c_mask.bool())
 
-            t = torch.randint(0, schedule.num_timesteps, (B,), device=device, generator=rng)
+            t = torch.randint(
+                0, schedule.num_timesteps, (B,), device=device, generator=rng
+            )
             noise = torch.randn(z0.shape, device=device, generator=rng)
             z_t = q_sample(z0, t, schedule, noise)
 
@@ -307,19 +309,9 @@ def _is_mock_loader(loader) -> bool:
 
 
 if __name__ == "__main__":
-    import argparse
-    from src.config.schema import Config
+    from src.config.loader import create_config_from_cli
 
     logging.basicConfig(level=logging.INFO)
-    parser = argparse.ArgumentParser(description="Train latent diffusion model")
-    parser.add_argument("--config", type=str, default=None)
-    args = parser.parse_args()
-
-    if args.config is not None:
-        import yaml
-        with open(args.config) as f:
-            cfg = Config.from_dict(yaml.safe_load(f))
-    else:
-        cfg = Config()
+    cfg = create_config_from_cli()
     result = train_diffusion(cfg)
     print("Final metrics:", result)

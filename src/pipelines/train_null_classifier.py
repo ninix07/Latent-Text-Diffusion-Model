@@ -229,18 +229,9 @@ def train_null_classifier(
 
 
 if __name__ == "__main__":
-    import argparse
+    from src.config.loader import create_config_from_cli
 
     logging.basicConfig(level=logging.INFO)
-    parser = argparse.ArgumentParser(description="Train NullClassifier")
-    parser.add_argument("--config", type=str, default=None)
-    args = parser.parse_args()
-
-    if args.config is not None:
-        import yaml
-        with open(args.config) as f:
-            cfg = Config.from_dict(yaml.safe_load(f))
-    else:
-        cfg = Config()
+    cfg = create_config_from_cli()
     result = train_null_classifier(cfg)
     print("Final metrics:", result)
