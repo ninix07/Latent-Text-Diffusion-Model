@@ -67,22 +67,20 @@ def train_vae(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # ------------------------------------------------------------------ data
+    from src.data.tokenization import create_tokenizer
+
     if train_loader is None or val_loader is None:
-        from src.data.tokenization import create_tokenizer
         from src.data.loaders import create_squad_dataloaders
 
         tokenizer = create_tokenizer(config.encoder.model_name)
         train_loader, val_loader = create_squad_dataloaders(config, tokenizer)
+    else:
+        tokenizer = create_tokenizer(config.encoder.model_name)
 
     # ------------------------------------------------------------------ model
-    # Build a tiny embedding table to infer vocab size without loading BERT
-    try:
-        from transformers import AutoTokenizer
-
-        _tok = AutoTokenizer.from_pretrained(config.encoder.model_name)
-        vocab_size = len(_tok)
-    except Exception:
-        vocab_size = 30522  # BERT default
+    # Use the same tokenizer that the data loaders use so vocab_size includes
+    # the [NULL_ANS] special token added by create_tokenizer.
+    vocab_size = len(tokenizer)
 
     pretrained_emb = torch.randn(vocab_size, config.vae_arch.embed_dim) * 0.02
     pretrained_emb = pretrained_emb.to(device)
