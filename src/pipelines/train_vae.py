@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 def _validate(
-    vae: SequenceVAE, val_loader, device: torch.device, beta: float = 1.0, tokenizer=None
+    vae: SequenceVAE,
+    val_loader,
+    device: torch.device,
+    beta: float = 1.0,
+    tokenizer=None,
 ) -> dict[str, float]:
     """Run one pass over val_loader and return averaged metrics.
 
@@ -51,7 +55,9 @@ def _validate(
                 for i in range(pred_ids.size(0)):
                     # skip_special_tokens removes [NULL_ANS] → empty string for unanswerable,
                     # which is the correct SQuAD unanswerable prediction.
-                    pred_text = tokenizer.decode(pred_ids[i].tolist(), skip_special_tokens=True).strip()
+                    pred_text = tokenizer.decode(
+                        pred_ids[i].tolist(), skip_special_tokens=True
+                    ).strip()
                     all_preds.append(pred_text)
                     all_refs.append(batch["all_answer_texts"][i])
 
@@ -142,12 +148,19 @@ def train_vae(
 
         # Accumulators for epoch-averaged train metrics
         epoch_totals: dict[str, float] = {
-            "loss": 0.0, "recon": 0.0, "kl": 0.0,
-            "mu_mean": 0.0, "mu_std": 0.0,
-            "std_mean": 0.0, "std_std": 0.0,
-            "z_mean": 0.0, "z_std": 0.0,
+            "loss": 0.0,
+            "recon": 0.0,
+            "kl": 0.0,
+            "mu_mean": 0.0,
+            "mu_std": 0.0,
+            "std_mean": 0.0,
+            "std_std": 0.0,
+            "z_mean": 0.0,
+            "z_std": 0.0,
             "active_dims": 0.0,
-            "kl_per_dim_max": 0.0, "kl_per_dim_min": 0.0, "kl_per_dim_std": 0.0,
+            "kl_per_dim_max": 0.0,
+            "kl_per_dim_min": 0.0,
+            "kl_per_dim_std": 0.0,
         }
         epoch_steps = 0
 
@@ -164,7 +177,9 @@ def train_vae(
                 warmup_steps=tc.beta_warmup_steps,
             )
 
-            logits, z, mu, log_var, loss_dict = vae(answer_ids, answer_mask, beta=beta, free_bits=tc.free_bits)
+            logits, z, mu, log_var, loss_dict = vae(
+                answer_ids, answer_mask, beta=beta, free_bits=tc.free_bits
+            )
             loss = loss_dict["total"] / tc.grad_accum_steps
             loss.backward()
 
@@ -181,21 +196,51 @@ def train_vae(
                 mu_flat = mu.reshape(-1, mu.size(-1))
                 active_dims = int((mu_flat.var(dim=0) > 0.01).sum().item())
                 kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
-                kl_per_dim_mean = kl_per_dim.reshape(-1, kl_per_dim.size(-1)).mean(dim=0)
+                kl_per_dim_mean = kl_per_dim.reshape(-1, kl_per_dim.size(-1)).mean(
+                    dim=0
+                )
 
-            epoch_totals["loss"] += loss_dict["total"].item()
-            epoch_totals["recon"] += loss_dict["recon"].item()
-            epoch_totals["kl"] += loss_dict["kl"].item()
-            epoch_totals["mu_mean"] += mu.mean().item()
-            epoch_totals["mu_std"] += mu.std().item()
-            epoch_totals["std_mean"] += std.mean().item()
-            epoch_totals["std_std"] += std.std().item()
-            epoch_totals["z_mean"] += z.mean().item()
-            epoch_totals["z_std"] += z.std().item()
-            epoch_totals["active_dims"] += active_dims
-            epoch_totals["kl_per_dim_max"] += kl_per_dim_mean.max().item()
-            epoch_totals["kl_per_dim_min"] += kl_per_dim_mean.min().item()
-            epoch_totals["kl_per_dim_std"] += kl_per_dim_mean.std().item()
+            step_metrics = {
+                "loss": loss_dict["total"].item(),
+                "recon": loss_dict["recon"].item(),
+                "kl": loss_dict["kl"].item(),
+                "mu_mean": mu.mean().item(),
+                "mu_std": mu.std().item(),
+                "std_mean": std.mean().item(),
+                "std_std": std.std().item(),
+                "z_mean": z.mean().item(),
+                "z_std": z.std().item(),
+                "active_dims": active_dims,
+                "kl_per_dim_max": kl_per_dim_mean.max().item(),
+                "kl_per_dim_min": kl_per_dim_mean.min().item(),
+                "kl_per_dim_std": kl_per_dim_mean.std().item(),
+            }
+
+            for k, v in step_metrics.items():
+                epoch_totals[k] += v
+
+            # ---- wandb: per-step live curves ----
+            log_wandb(
+                {
+                    "train/loss": step_metrics["loss"],
+                    "train/recon": step_metrics["recon"],
+                    "train/kl": step_metrics["kl"],
+                    "train/beta": beta,
+                    "train/lr": optimizer.param_groups[0]["lr"],
+                    "latent/mu_mean": step_metrics["mu_mean"],
+                    "latent/mu_std": step_metrics["mu_std"],
+                    "latent/std_mean": step_metrics["std_mean"],
+                    "latent/std_std": step_metrics["std_std"],
+                    "latent/z_mean": step_metrics["z_mean"],
+                    "latent/z_std": step_metrics["z_std"],
+                    "latent/active_dims": step_metrics["active_dims"],
+                    "latent/kl_per_dim_max": step_metrics["kl_per_dim_max"],
+                    "latent/kl_per_dim_min": step_metrics["kl_per_dim_min"],
+                    "latent/kl_per_dim_std": step_metrics["kl_per_dim_std"],
+                    "epoch": epoch,
+                },
+                step=global_step,
+            )
 
         # ---- end-of-epoch: log averaged train metrics + validate ----
         n = max(epoch_steps, 1)
@@ -206,28 +251,6 @@ def train_vae(
             epoch_totals["recon"] / n,
             epoch_totals["kl"] / n,
         )
-        log_wandb(
-            {
-                "train/loss": epoch_totals["loss"] / n,
-                "train/recon": epoch_totals["recon"] / n,
-                "train/kl": epoch_totals["kl"] / n,
-                "train/beta": beta,
-                "train/lr": optimizer.param_groups[0]["lr"],
-                "latent/mu_mean": epoch_totals["mu_mean"] / n,
-                "latent/mu_std": epoch_totals["mu_std"] / n,
-                "latent/std_mean": epoch_totals["std_mean"] / n,
-                "latent/std_std": epoch_totals["std_std"] / n,
-                "latent/z_mean": epoch_totals["z_mean"] / n,
-                "latent/z_std": epoch_totals["z_std"] / n,
-                "latent/active_dims": epoch_totals["active_dims"] / n,
-                "latent/kl_per_dim_max": epoch_totals["kl_per_dim_max"] / n,
-                "latent/kl_per_dim_min": epoch_totals["kl_per_dim_min"] / n,
-                "latent/kl_per_dim_std": epoch_totals["kl_per_dim_std"] / n,
-                "epoch": epoch,
-            },
-            step=global_step,
-        )
-
         val_metrics = _validate(vae, val_loader, device, beta=beta, tokenizer=tokenizer)
         final_metrics = val_metrics
         logger.info(
