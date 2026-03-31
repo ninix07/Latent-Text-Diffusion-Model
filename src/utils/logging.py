@@ -47,10 +47,6 @@ def init_wandb(config: dict, project: str = "latent-diffusion-text") -> None:
         return
     try:
         _wandb.init(project=project, config=config, reinit=True)
-        # Register global_step as the x-axis so it doesn't conflict with
-        # wandb's internal auto-increment counter used by system metrics.
-        _wandb.define_metric("global_step")
-        _wandb.define_metric("*", step_metric="global_step")
         _wandb_ok = True
         logger.info("wandb initialised (project=%s, run=%s)", project, _wandb.run.name)
     except Exception as exc:
@@ -63,9 +59,7 @@ def log_wandb(metrics: dict[str, Any], step: int) -> None:
     if not _wandb_ok:
         return
     try:
-        # Include global_step as a metric (not the step= kwarg) so it serves
-        # as the x-axis without conflicting with the system monitor's counter.
-        _wandb.log({"global_step": step, **metrics})
+        _wandb.log(metrics, step=step)
     except Exception as exc:
         logger.warning("wandb.log failed at step %d: %s", step, exc)
 
