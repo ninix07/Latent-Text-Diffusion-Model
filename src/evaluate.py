@@ -50,13 +50,11 @@ def evaluate(
     ).to(device)
 
     vae_ckpt = load_checkpoint(vae_checkpoint)
-    try:
-        from transformers import AutoTokenizer as _AT
-        _tok = _AT.from_pretrained(config.encoder.model_name)
-        _vocab_size = len(_tok)
-    except Exception:
-        _vocab_size = 30522
-    _pretrained_emb = torch.randn(_vocab_size, config.vae_arch.embed_dim) * 0.02
+    # create_tokenizer adds [NULL_ANS] — must use it so vocab_size matches the
+    # checkpoint (bare AutoTokenizer gives 30522, training used 30523).
+    _tokenizer_for_vae = create_tokenizer(config.encoder.model_name)
+    _vocab_size = len(_tokenizer_for_vae)
+    _pretrained_emb = torch.randn(_vocab_size, config.vae_arch.embed_dim) * 0.5
     vae = SequenceVAE(config.vae_arch, pretrained_embeddings=_pretrained_emb)
     vae.load_state_dict(vae_ckpt["model_state_dict"])
     vae.to(device)

@@ -102,6 +102,9 @@ def train_vae(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    from src.config.seed import seed_everything
+    seed_everything(config.seed)
+
     # ------------------------------------------------------------------ data
     from src.data.tokenization import create_tokenizer
 
@@ -154,6 +157,7 @@ def train_vae(
             "recon": 0.0,
             "kl": 0.0,
             "true_kl": 0.0,
+            "grad_norm": 0.0,
             "mu_mean": 0.0,
             "mu_std": 0.0,
             "std_mean": 0.0,
@@ -186,8 +190,9 @@ def train_vae(
             loss = loss_dict["total"] / tc.grad_accum_steps
             loss.backward()
 
+            grad_norm = 0.0
             if accumulation_step(global_step, tc.grad_accum_steps):
-                clip_gradients(vae, tc.grad_clip_max_norm)
+                grad_norm = clip_gradients(vae, tc.grad_clip_max_norm)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
@@ -210,6 +215,7 @@ def train_vae(
                 "recon": loss_dict["recon"].item(),
                 "kl": loss_dict["kl"].item(),
                 "true_kl": true_kl,
+                "grad_norm": grad_norm,
                 "mu_mean": mu.mean().item(),
                 "mu_std": mu.std().item(),
                 "std_mean": std.mean().item(),
@@ -232,6 +238,7 @@ def train_vae(
                     "train/recon": step_metrics["recon"],
                     "train/kl": step_metrics["kl"],
                     "train/true_kl": step_metrics["true_kl"],
+                    "train/grad_norm": step_metrics["grad_norm"],
                     "train/beta": beta,
                     "train/lr": optimizer.param_groups[0]["lr"],
                     "latent/mu_mean": step_metrics["mu_mean"],
@@ -258,7 +265,13 @@ def train_vae(
             epoch_totals["recon"] / n,
             epoch_totals["kl"] / n,
         )
-        val_metrics = _validate(vae, val_loader, device, beta=beta, tokenizer=tokenizer)
+        # Validate with EMA weights for a smoother, more stable estimate.
+        # Use tc.beta_end so the val loss composition is fixed across all epochs
+        # (early-epoch beta≈0 would make val loss look artificially good and cause
+        # premature early stopping).
+        ema.apply()
+        val_metrics = _validate(vae, val_loader, device, beta=tc.beta_end, tokenizer=tokenizer)
+        ema.restore()
         final_metrics = val_metrics
         logger.info(
             "epoch=%d  val_loss=%.4f  recon=%.4f  kl=%.4f  em=%.3f  f1=%.3f  has_ans_em=%.3f  has_ans_f1=%.3f",
@@ -289,6 +302,8 @@ def train_vae(
             best_val_loss = val_metrics["total"]
             patience_counter = 0
             ckpt_path = Path(config.paths.checkpoint_dir) / "vae_best.pt"
+            # Save the EMA-smoothed model as the best checkpoint.
+            ema.apply()
             save_checkpoint(
                 path=ckpt_path,
                 model=vae,
@@ -299,7 +314,8 @@ def train_vae(
                 step=global_step,
                 metrics=val_metrics,
             )
-            logger.info("Saved VAE checkpoint: %s", ckpt_path)
+            ema.restore()
+            logger.info("Saved VAE checkpoint (EMA weights): %s", ckpt_path)
         else:
             patience_counter += 1
 

@@ -118,13 +118,16 @@ def test_loss_decreases(tiny_config: Config):
     L = cfg.vae_arch.max_answer_len
     V = 100
 
+    # Use a fixed seed so the batch + model init are deterministic *before*
+    # train_vae resets the seed via seed_everything(config.seed).
+    torch.manual_seed(0)
     fixed_ids = torch.randint(0, V, (B, L))
     fixed_mask = torch.ones(B, L, dtype=torch.long)
     fixed_ans = torch.ones(B, dtype=torch.bool)
 
     class _RepeatDataset(torch.utils.data.Dataset):
         def __len__(self):
-            return 20 * B
+            return 40 * B  # more steps → reliable convergence under any global seed
 
         def __getitem__(self, idx):
             return fixed_ids[idx % B], fixed_mask[idx % B], fixed_ans[idx % B]
@@ -146,6 +149,7 @@ def test_loss_decreases(tiny_config: Config):
 
     import src.pipelines.train_vae as tv_mod
 
+    torch.manual_seed(0)
     vae_instance = _make_tiny_vae(cfg)
 
     class _FakeVAECls:

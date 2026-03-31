@@ -44,31 +44,27 @@ def export_latents(
     # ------------------------------------------------------------------ load VAE
     from src.models.vae.vae import SequenceVAE
     from src.training.checkpoint import load_checkpoint
-    from src.config.schema import Config as CfgCls, VAEArchConfig
+    from src.config.schema import Config as CfgCls
 
     ckpt = load_checkpoint(vae_checkpoint_path)
     saved_cfg = CfgCls.from_dict(ckpt["config"])
 
-    # Need pretrained embeddings to initialise the model
-    try:
-        from transformers import AutoTokenizer
-        tok = AutoTokenizer.from_pretrained(saved_cfg.encoder.model_name)
-        vocab_size = len(tok)
-    except Exception:
-        vocab_size = 30522
+    # ------------------------------------------------------------------ dataloaders
+    from src.data.tokenization import create_tokenizer
+    from src.data.loaders import create_squad_dataloaders
 
-    pretrained_emb = torch.randn(vocab_size, saved_cfg.vae_arch.embed_dim) * 0.02
+    # create_tokenizer adds [NULL_ANS] — must use it (not bare AutoTokenizer) so
+    # vocab_size matches the checkpoint trained with the extended vocab.
+    tokenizer = create_tokenizer(saved_cfg.encoder.model_name)
+    vocab_size = len(tokenizer)
+
+    pretrained_emb = torch.randn(vocab_size, saved_cfg.vae_arch.embed_dim) * 0.5
     pretrained_emb = pretrained_emb.to(device)
 
     vae = SequenceVAE(saved_cfg.vae_arch, pretrained_embeddings=pretrained_emb).to(device)
     vae.load_state_dict(ckpt["model_state_dict"])
     vae.eval()
 
-    # ------------------------------------------------------------------ dataloaders
-    from src.data.tokenization import create_tokenizer
-    from src.data.loaders import create_squad_dataloaders
-
-    tokenizer = create_tokenizer(saved_cfg.encoder.model_name)
     train_loader, val_loader = create_squad_dataloaders(saved_cfg, tokenizer)
 
     # ------------------------------------------------------------------ encode helper

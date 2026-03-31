@@ -21,7 +21,8 @@ class OutputProjection(nn.Module):
         projection.  A **detached copy** is used.
     """
 
-    LOG_TAU_MAX = 4.6  # ≈ ln(100)
+    LOG_TAU_MIN = -2.0  # tau ≥ ~0.135; prevents logits from vanishing
+    LOG_TAU_MAX = 4.6   # ≈ ln(100)
 
     def __init__(
         self,
@@ -53,5 +54,5 @@ class OutputProjection(nn.Module):
         w = F.normalize(self.linear.weight, dim=-1)
         cos_sim = F.linear(h, w)  # (B, L, V)
 
-        tau = torch.exp(torch.clamp(self.log_tau, max=self.LOG_TAU_MAX))
+        tau = torch.exp(torch.clamp(self.log_tau, min=self.LOG_TAU_MIN, max=self.LOG_TAU_MAX))
         return cos_sim * tau

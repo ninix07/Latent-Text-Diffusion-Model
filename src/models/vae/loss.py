@@ -39,8 +39,12 @@ def compute_vae_loss(
     ce = F.cross_entropy(logits_flat, target_flat, reduction="none")
     recon = (ce * mask_flat).sum() / mask_flat.sum().clamp(min=1)
 
-    # KL: mean over batch+sequence, sum over latent dims
-    kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp()).mean(dim=(0, 1))  # (D,)
+    # KL: masked mean over real (non-padding) positions, sum over latent dims.
+    # Averaging over padding positions adds noise because the encoder still
+    # produces mu/log_var at those positions despite them carrying no content.
+    mask_3d = mask.unsqueeze(-1).float()  # (B, L, 1)
+    kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, L, D)
+    kl_per_dim = (kl_raw * mask_3d).sum(dim=(0, 1)) / mask_3d.sum().clamp(min=1)  # (D,)
     if free_bits > 0.0:
         kl = kl_per_dim.clamp(min=free_bits).sum()
     else:

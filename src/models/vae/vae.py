@@ -91,7 +91,11 @@ class SequenceVAE(nn.Module):
             loss_dict has keys ``"total"``, ``"recon"``, ``"kl"``.
         """
         z, mu, log_var = self.encode(token_ids, mask)
-        logits = self.decode(z, mask)
+        # Decoder always sees an all-ones mask so it cannot infer answer length from
+        # the mask boundary. This aligns training with generation (GenerationPipeline
+        # also passes a uniform mask when calling decode_to_tokens).
+        decoder_mask = torch.ones_like(mask)
+        logits = self.decode(z, decoder_mask)
         total, recon, kl = compute_vae_loss(logits, token_ids, mask, mu, log_var, beta, free_bits)
         loss_dict = {"total": total, "recon": recon, "kl": kl}
         return logits, z, mu, log_var, loss_dict
