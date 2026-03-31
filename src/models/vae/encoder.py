@@ -104,5 +104,5 @@ class VAEEncoder(nn.Module):
 
         h = self.proj(x)
         mu = self.mu_head(h)
-        log_var = self.logvar_head(h)
+        log_var = self.logvar_head(h).clamp(-4.0, 4.0)
         return mu, log_var

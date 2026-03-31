@@ -118,7 +118,9 @@ def train_vae(
     # the [NULL_ANS] special token added by create_tokenizer.
     vocab_size = len(tokenizer)
 
-    pretrained_emb = torch.randn(vocab_size, config.vae_arch.embed_dim) * 0.02
+    # Initialize embeddings at a scale comparable to sinusoidal PE (~0.7 std) so
+    # that token identity is not drowned out by positional encoding at the input.
+    pretrained_emb = torch.randn(vocab_size, config.vae_arch.embed_dim) * 0.5
     pretrained_emb = pretrained_emb.to(device)
 
     vae = SequenceVAE(config.vae_arch, pretrained_embeddings=pretrained_emb).to(device)
@@ -151,6 +153,7 @@ def train_vae(
             "loss": 0.0,
             "recon": 0.0,
             "kl": 0.0,
+            "true_kl": 0.0,
             "mu_mean": 0.0,
             "mu_std": 0.0,
             "std_mean": 0.0,
@@ -199,11 +202,14 @@ def train_vae(
                 kl_per_dim_mean = kl_per_dim.reshape(-1, kl_per_dim.size(-1)).mean(
                     dim=0
                 )
+                # True KL (no free bits) — exposes posterior collapse
+                true_kl = kl_per_dim_mean.sum().item()
 
             step_metrics = {
                 "loss": loss_dict["total"].item(),
                 "recon": loss_dict["recon"].item(),
                 "kl": loss_dict["kl"].item(),
+                "true_kl": true_kl,
                 "mu_mean": mu.mean().item(),
                 "mu_std": mu.std().item(),
                 "std_mean": std.mean().item(),
@@ -225,6 +231,7 @@ def train_vae(
                     "train/loss": step_metrics["loss"],
                     "train/recon": step_metrics["recon"],
                     "train/kl": step_metrics["kl"],
+                    "train/true_kl": step_metrics["true_kl"],
                     "train/beta": beta,
                     "train/lr": optimizer.param_groups[0]["lr"],
                     "latent/mu_mean": step_metrics["mu_mean"],
