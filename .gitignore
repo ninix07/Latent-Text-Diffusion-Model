@@ -11,3 +11,4 @@ ENV
 env.bak
 *.pt
 checkpoints/
+wandb/
