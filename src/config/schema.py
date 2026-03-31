@@ -57,7 +57,7 @@ class VAETrainingConfig:
 class QualityGateConfig:
     """Thresholds for latent quality gate checks."""
     min_recon_accuracy: float = 0.85           # Minimum token reconstruction accuracy
-    min_mean_kl: float = 0.1                   # Minimum mean KL divergence
+    min_mean_kl: float = 5.0                    # Minimum mean KL divergence (sum over D, mean over B/L)
     min_active_dims: int = 10                  # Minimum active latent dimensions
     min_centroid_distance: float = 0.5         # Min L2 distance between ans/no-ans centroids
     active_dim_variance_threshold: float = 0.1 # Variance threshold for "active" dim
@@ -142,7 +142,16 @@ class Config:
 
     @classmethod
     def from_dict(cls, d: dict) -> Config:
+        # Keys removed from their dataclasses — silently drop them so old
+        # checkpoints and YAML files can still be loaded.
+        _REMOVED_KEYS: dict[str, set[str]] = {
+            "VAETrainingConfig": {"val_every_n_steps"},
+        }
+
         def _checked(dc_cls, data: dict) -> dict:
+            # Drop keys that were removed in a previous version
+            removed = _REMOVED_KEYS.get(dc_cls.__name__, set())
+            data = {k: v for k, v in data.items() if k not in removed}
             valid = {f.name for f in fields(dc_cls)}
             unknown = set(data) - valid
             if unknown:

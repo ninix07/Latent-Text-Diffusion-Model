@@ -17,13 +17,13 @@ vae_training:
   grad_clip_max_norm: 1.0            # Max gradient norm
   grad_accum_steps: 1                # Gradient accumulation steps
   beta_start: 0.0                    # KL weight start (annealing)
-  beta_end: 1.0                      # KL weight end
-  beta_warmup_steps: 2000            # Steps to linearly ramp beta
-  val_every_n_steps: 500             # Validate every N steps
+  beta_end: 0.5                      # KL weight end
+  beta_warmup_steps: 20000           # Steps to linearly ramp beta
+  free_bits: 0.5                     # Min KL per latent dim (free bits)
 
 quality_gate:
   min_recon_accuracy: 0.85           # Min token-level reconstruction accuracy
-  min_mean_kl: 0.1                   # Min average KL to avoid posterior collapse
+  min_mean_kl: 5.0                    # Min mean KL (sum over D=64, mean over B/L)
   min_active_dims: 10                # Min latent dims with variance > threshold
   min_centroid_distance: 0.5         # Min L2 between answerable/unanswerable centroids
   active_dim_variance_threshold: 0.1 # Variance cutoff for "active" dimension

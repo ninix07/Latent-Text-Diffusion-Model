@@ -46,7 +46,7 @@ def _validate(
                 totals[k] += loss_dict[k].item()
             n_batches += 1
 
-            if tokenizer is not None:
+            if tokenizer is not None and "all_answer_texts" in batch:
                 pred_ids = logits.argmax(dim=-1)  # (B, L)
                 for i in range(pred_ids.size(0)):
                     # skip_special_tokens removes [NULL_ANS] → empty string for unanswerable,

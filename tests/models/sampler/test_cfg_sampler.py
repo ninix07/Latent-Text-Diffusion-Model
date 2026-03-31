@@ -51,7 +51,8 @@ def test_w0_equals_unconditional(denoiser: ConditionalDenoiser, inputs) -> None:
     with torch.no_grad():
         eps_cfg = cfg.predict_noise(z_t, t, conditioning, conditioning_mask)
 
-        # Unconditional: null conditioning = zeros
+        # Unconditional: zero conditioning, no masking.
+        # Matches apply_cfg_dropout (zeros values, mask cleared to False).
         null_cond = torch.zeros_like(conditioning)
         null_mask = torch.zeros_like(conditioning_mask)
         eps_uncond = denoiser(z_t, t, null_cond, null_mask)

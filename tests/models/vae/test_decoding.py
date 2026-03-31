@@ -24,7 +24,9 @@ def test_greedy_matches_argmax(logits):
 
 def test_beam_width_1_equals_greedy(logits):
     greedy = greedy_decode(logits)
-    beam = beam_search_decode(logits, beam_width=1, pad_id=0, eos_id=1)
+    # eos_id=VOCAB_SIZE is out of the vocab range so beam search never hits EOS
+    # and doesn't truncate, making it equivalent to greedy decode.
+    beam = beam_search_decode(logits, beam_width=1, pad_id=0, eos_id=VOCAB_SIZE)
     assert torch.equal(greedy, beam)
 
 

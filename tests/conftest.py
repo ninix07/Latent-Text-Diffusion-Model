@@ -44,7 +44,7 @@ def tiny_config() -> Config:
             beta_start=0.0,
             beta_end=1.0,
             beta_warmup_steps=50,
-            val_every_n_steps=10,
+            free_bits=0.0,
         ),
         quality_gate=QualityGateConfig(),
         denoiser_arch=DenoiserArchConfig(

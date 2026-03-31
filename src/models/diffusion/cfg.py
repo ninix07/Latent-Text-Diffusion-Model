@@ -56,8 +56,9 @@ def apply_cfg_dropout(
     conditioning = conditioning.clone()
     conditioning_mask = conditioning_mask.clone()
 
-    # Zero conditioning and mark all positions as masked for dropped samples
+    # Zero out conditioning values; clear the mask so the denoiser attends to
+    # the zero vectors uniformly (all-True masking causes NaN via softmax(-inf)).
     conditioning[drop] = 0.0
-    conditioning_mask[drop] = True
+    conditioning_mask[drop] = False
 
     return conditioning, conditioning_mask

@@ -68,6 +68,9 @@ class _MockNullClassifier(torch.nn.Module):
 
 
 class _MockTokenizer:
+    pad_token_id = 0
+    eos_token_id = 102
+
     def decode(self, ids, skip_special_tokens=True):
         return "mock answer"
 
@@ -94,16 +97,19 @@ def _make_pipeline(tiny_config: Config) -> GenerationPipeline:
 # ---------------------------------------------------------------------------
 
 def test_single_generation(tiny_config: Config):
-    """generate() should return a dict with expected keys."""
+    """generate() should return a list containing a dict with expected keys."""
     pipeline = _make_pipeline(tiny_config)
     L, C, Q = 10, tiny_config.encoder.max_context_len, tiny_config.encoder.max_question_len
 
-    result = pipeline.generate(
+    results = pipeline.generate(
         context_ids=torch.zeros(1, C, dtype=torch.long),
         context_mask=torch.ones(1, C, dtype=torch.long),
         question_ids=torch.zeros(1, Q, dtype=torch.long),
         question_mask=torch.ones(1, Q, dtype=torch.long),
     )
+    assert isinstance(results, list)
+    assert len(results) == 1
+    result = results[0]
     assert isinstance(result, dict)
     assert "answer_text" in result
     assert "is_answerable" in result

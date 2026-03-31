@@ -63,9 +63,11 @@ class CFGSampler:
         """
         B = z_t.shape[0]
 
-        # Build null (unconditional) conditioning
+        # Build null (unconditional) conditioning: zero values, no masking.
+        # All-True masking causes softmax(-inf) = NaN; attending to zeros is safe
+        # and consistent with how apply_cfg_dropout handles unconditional samples.
         null_cond = torch.zeros_like(conditioning)
-        null_mask = torch.ones_like(conditioning_mask).bool()
+        null_mask = torch.zeros_like(conditioning_mask).bool()
 
         # Stack conditioned and unconditioned in the batch dimension
         z_double = torch.cat([z_t, z_t], dim=0)           # (2B, seq_len, latent_dim)

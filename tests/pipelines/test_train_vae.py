@@ -65,11 +65,9 @@ def _make_tiny_vae(config: Config) -> nn.Module:
 
 def test_one_epoch_runs(tiny_config: Config):
     """Training for 2 steps should complete without raising."""
-    # Use a config that triggers val quickly (after 2 steps)
     tc = tiny_config.vae_training
-    # Replace val_every_n_steps with 2 so we exercise validation code too
     from dataclasses import replace as _replace
-    new_tc = _replace(tc, epochs=1, val_every_n_steps=2, patience=10)
+    new_tc = _replace(tc, epochs=1, patience=10)
     cfg = _replace(tiny_config, vae_training=new_tc)
 
     device = torch.device("cpu")
@@ -106,7 +104,6 @@ def test_loss_decreases(tiny_config: Config):
     new_tc = _replace(
         tiny_config.vae_training,
         epochs=1,
-        val_every_n_steps=100,   # skip val during run
         patience=100,
         learning_rate=1e-2,
         beta_start=0.0,
