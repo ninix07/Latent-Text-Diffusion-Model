@@ -48,9 +48,9 @@ class VAETrainingConfig:
     grad_clip_max_norm: float = 1.0            # Gradient clipping threshold
     grad_accum_steps: int = 1                  # Gradient accumulation steps
     beta_start: float = 0.0                    # KL weight at start
-    beta_end: float = 1.0                      # KL weight at end
-    beta_warmup_steps: int = 2000              # Steps to ramp beta
-    val_every_n_steps: int = 500               # Validation frequency
+    beta_end: float = 0.5                      # KL weight at end
+    beta_warmup_steps: int = 20000             # Steps to ramp beta
+    free_bits: float = 0.5                     # Min KL per latent dim (free bits)
 
 
 @dataclass(frozen=True)

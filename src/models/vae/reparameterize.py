@@ -22,7 +22,7 @@ def reparameterize(
 
 
 def kl_divergence(mu: torch.Tensor, log_var: torch.Tensor) -> torch.Tensor:
-    """KL(q(z|x) || N(0, I)), summed over dims, averaged over batch."""
-    # per-sample: sum over all dims (seq_len * latent_dim)
-    kl_per_sample = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp(), dim=list(range(1, mu.ndim)))
-    return kl_per_sample.mean()
+    """KL(q(z|x) || N(0, I)), summed over latent dims, averaged over batch and sequence."""
+    # (B, L, D) → mean over batch+sequence, sum over latent dims so scale matches per-token recon
+    kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, L, D)
+    return kl_per_dim.mean(dim=(0, 1)).sum()  # scalar

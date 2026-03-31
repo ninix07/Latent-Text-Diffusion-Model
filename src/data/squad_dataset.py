@@ -64,6 +64,7 @@ class SQuADDataset(Dataset):
         max_context_len: int,
         max_question_len: int,
         max_answer_len: int,
+        data=None,
     ) -> None:
         self.tokenizer = tokenizer
         self.max_context_len = max_context_len
@@ -71,7 +72,7 @@ class SQuADDataset(Dataset):
         self.max_answer_len = max_answer_len
         self.null_token_id = get_null_token_id(tokenizer)
 
-        self.data = load_dataset("squad_v2", split=split)
+        self.data = data if data is not None else load_dataset("squad_v2", split=split)
 
     # ------------------------------------------------------------------
     def __len__(self) -> int:

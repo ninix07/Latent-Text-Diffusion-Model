@@ -32,23 +32,27 @@ def create_squad_dataloaders(
 ) -> Tuple[DataLoader, DataLoader]:
     """Create training and validation DataLoaders for SQuAD v2.
 
+    Splits the SQuAD v2 training set 90/10 (reproducible seed=42) so that
+    validation reflects in-distribution performance on held-out training
+    examples rather than the official test partition.
+
     The training loader uses a balanced sampler; the validation loader
     iterates sequentially (no sampler).
     """
-    train_ds = SQuADDataset(
-        split="train",
+    from datasets import load_dataset
+
+    raw_train = load_dataset("squad_v2", split="train")
+    splits = raw_train.train_test_split(test_size=0.1, seed=42)
+
+    ds_kwargs = dict(
+        split="train",  # unused when data= is provided; kept for interface compat
         tokenizer=tokenizer,
         max_context_len=config.encoder.max_context_len,
         max_question_len=config.encoder.max_question_len,
         max_answer_len=config.vae_arch.max_answer_len,
     )
-    val_ds = SQuADDataset(
-        split="validation",
-        tokenizer=tokenizer,
-        max_context_len=config.encoder.max_context_len,
-        max_question_len=config.encoder.max_question_len,
-        max_answer_len=config.vae_arch.max_answer_len,
-    )
+    train_ds = SQuADDataset(**ds_kwargs, data=splits["train"])
+    val_ds = SQuADDataset(**ds_kwargs, data=splits["test"])
 
     train_sampler = create_balanced_sampler(train_ds)
 

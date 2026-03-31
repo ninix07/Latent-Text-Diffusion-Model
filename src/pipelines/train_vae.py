@@ -21,23 +21,53 @@ logger = logging.getLogger(__name__)
 
 
 def _validate(
-    vae: SequenceVAE, val_loader, device: torch.device, beta: float = 1.0
+    vae: SequenceVAE, val_loader, device: torch.device, beta: float = 1.0, tokenizer=None
 ) -> dict[str, float]:
-    """Run one pass over val_loader and return averaged metrics."""
+    """Run one pass over val_loader and return averaged metrics.
+
+    When *tokenizer* is provided also computes reconstruction EM and F1:
+    the VAE encodes each answer then decodes it; EM/F1 measure how faithfully
+    the decoded text matches the original answer.
+    """
+    from src.evaluation.squad_metrics import compute_squad_metrics
+
     vae.eval()
     totals: dict[str, float] = {"total": 0.0, "recon": 0.0, "kl": 0.0}
     n_batches = 0
+    all_preds: list[str] = []
+    all_refs: list[list[str]] = []
+
     with torch.no_grad():
         for batch in val_loader:
             answer_ids = batch["answer_ids"].to(device)
             answer_mask = batch["answer_mask"].to(device)
-            _, _, _, _, loss_dict = vae(answer_ids, answer_mask, beta=beta)
+            logits, _, _, _, loss_dict = vae(answer_ids, answer_mask, beta=beta)
             for k in totals:
                 totals[k] += loss_dict[k].item()
             n_batches += 1
+
+            if tokenizer is not None:
+                pred_ids = logits.argmax(dim=-1)  # (B, L)
+                for i in range(pred_ids.size(0)):
+                    # skip_special_tokens removes [NULL_ANS] → empty string for unanswerable,
+                    # which is the correct SQuAD unanswerable prediction.
+                    pred_text = tokenizer.decode(pred_ids[i].tolist(), skip_special_tokens=True).strip()
+                    all_preds.append(pred_text)
+                    all_refs.append(batch["all_answer_texts"][i])
+
     if n_batches == 0:
         return totals
-    return {k: v / n_batches for k, v in totals.items()}
+
+    result = {k: v / n_batches for k, v in totals.items()}
+
+    if tokenizer is not None and all_preds:
+        squad = compute_squad_metrics(all_preds, all_refs)
+        result["em"] = squad["em"]
+        result["f1"] = squad["f1"]
+        result["has_ans_em"] = squad["has_ans_em"]
+        result["has_ans_f1"] = squad["has_ans_f1"]
+
+    return result
 
 
 def train_vae(
@@ -109,8 +139,21 @@ def train_vae(
 
     for epoch in range(tc.epochs):
         vae.train()
+
+        # Accumulators for epoch-averaged train metrics
+        epoch_totals: dict[str, float] = {
+            "loss": 0.0, "recon": 0.0, "kl": 0.0,
+            "mu_mean": 0.0, "mu_std": 0.0,
+            "std_mean": 0.0, "std_std": 0.0,
+            "z_mean": 0.0, "z_std": 0.0,
+            "active_dims": 0.0,
+            "kl_per_dim_max": 0.0, "kl_per_dim_min": 0.0, "kl_per_dim_std": 0.0,
+        }
+        epoch_steps = 0
+
         for batch in train_loader:
             global_step += 1
+            epoch_steps += 1
             answer_ids = batch["answer_ids"].to(device)
             answer_mask = batch["answer_mask"].to(device)
 
@@ -121,7 +164,7 @@ def train_vae(
                 warmup_steps=tc.beta_warmup_steps,
             )
 
-            logits, z, mu, log_var, loss_dict = vae(answer_ids, answer_mask, beta=beta)
+            logits, z, mu, log_var, loss_dict = vae(answer_ids, answer_mask, beta=beta, free_bits=tc.free_bits)
             loss = loss_dict["total"] / tc.grad_accum_steps
             loss.backward()
 
@@ -132,97 +175,81 @@ def train_vae(
                 optimizer.zero_grad()
                 ema.update(global_step)
 
-            # ---- wandb: train metrics + latent vitals ----
+            # Accumulate train metrics for epoch average
             with torch.no_grad():
-                std = torch.exp(0.5 * log_var)  # posterior σ
-                # Per-dim variance of μ across batch+seq → dims with var > threshold are "active"
-                mu_flat = mu.reshape(-1, mu.size(-1))  # (B*L, latent_dim)
-                mu_dim_var = mu_flat.var(dim=0)  # (latent_dim,)
-                active_dims = int((mu_dim_var > 0.01).sum().item())
-                # Per-dim KL: -0.5*(1 + log_var - mu^2 - exp(log_var)), averaged over B*L
+                std = torch.exp(0.5 * log_var)
+                mu_flat = mu.reshape(-1, mu.size(-1))
+                active_dims = int((mu_flat.var(dim=0) > 0.01).sum().item())
                 kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
-                kl_per_dim_mean = kl_per_dim.reshape(-1, kl_per_dim.size(-1)).mean(
-                    dim=0
-                )  # (latent_dim,)
+                kl_per_dim_mean = kl_per_dim.reshape(-1, kl_per_dim.size(-1)).mean(dim=0)
 
-            log_wandb(
-                {
-                    "train/loss": loss_dict["total"].item(),
-                    "train/recon": loss_dict["recon"].item(),
-                    "train/kl": loss_dict["kl"].item(),
-                    "train/beta": beta,
-                    "train/lr": optimizer.param_groups[0]["lr"],
-                    "latent/mu_mean": mu.mean().item(),
-                    "latent/mu_std": mu.std().item(),
-                    "latent/std_mean": std.mean().item(),
-                    "latent/std_std": std.std().item(),
-                    "latent/z_mean": z.mean().item(),
-                    "latent/z_std": z.std().item(),
-                    "latent/active_dims": active_dims,
-                    "latent/kl_per_dim_max": kl_per_dim_mean.max().item(),
-                    "latent/kl_per_dim_min": kl_per_dim_mean.min().item(),
-                    "latent/kl_per_dim_std": kl_per_dim_mean.std().item(),
-                    "epoch": epoch,
-                },
-                step=global_step,
-            )
+            epoch_totals["loss"] += loss_dict["total"].item()
+            epoch_totals["recon"] += loss_dict["recon"].item()
+            epoch_totals["kl"] += loss_dict["kl"].item()
+            epoch_totals["mu_mean"] += mu.mean().item()
+            epoch_totals["mu_std"] += mu.std().item()
+            epoch_totals["std_mean"] += std.mean().item()
+            epoch_totals["std_std"] += std.std().item()
+            epoch_totals["z_mean"] += z.mean().item()
+            epoch_totals["z_std"] += z.std().item()
+            epoch_totals["active_dims"] += active_dims
+            epoch_totals["kl_per_dim_max"] += kl_per_dim_mean.max().item()
+            epoch_totals["kl_per_dim_min"] += kl_per_dim_mean.min().item()
+            epoch_totals["kl_per_dim_std"] += kl_per_dim_mean.std().item()
 
-            # ---- validation ----
-            if global_step % tc.val_every_n_steps == 0:
-                val_metrics = _validate(vae, val_loader, device, beta=beta)
-                logger.info(
-                    "step=%d val_loss=%.4f recon=%.4f kl=%.4f",
-                    global_step,
-                    val_metrics["total"],
-                    val_metrics["recon"],
-                    val_metrics["kl"],
-                )
-                final_metrics = val_metrics
-                log_wandb(
-                    {
-                        "val/loss": val_metrics["total"],
-                        "val/recon": val_metrics["recon"],
-                        "val/kl": val_metrics["kl"],
-                    },
-                    step=global_step,
-                )
+        # ---- end-of-epoch: log averaged train metrics + validate ----
+        n = max(epoch_steps, 1)
+        logger.info(
+            "epoch=%d  train_loss=%.4f  recon=%.4f  kl=%.4f",
+            epoch,
+            epoch_totals["loss"] / n,
+            epoch_totals["recon"] / n,
+            epoch_totals["kl"] / n,
+        )
+        log_wandb(
+            {
+                "train/loss": epoch_totals["loss"] / n,
+                "train/recon": epoch_totals["recon"] / n,
+                "train/kl": epoch_totals["kl"] / n,
+                "train/beta": beta,
+                "train/lr": optimizer.param_groups[0]["lr"],
+                "latent/mu_mean": epoch_totals["mu_mean"] / n,
+                "latent/mu_std": epoch_totals["mu_std"] / n,
+                "latent/std_mean": epoch_totals["std_mean"] / n,
+                "latent/std_std": epoch_totals["std_std"] / n,
+                "latent/z_mean": epoch_totals["z_mean"] / n,
+                "latent/z_std": epoch_totals["z_std"] / n,
+                "latent/active_dims": epoch_totals["active_dims"] / n,
+                "latent/kl_per_dim_max": epoch_totals["kl_per_dim_max"] / n,
+                "latent/kl_per_dim_min": epoch_totals["kl_per_dim_min"] / n,
+                "latent/kl_per_dim_std": epoch_totals["kl_per_dim_std"] / n,
+                "epoch": epoch,
+            },
+            step=global_step,
+        )
 
-                if val_metrics["total"] < best_val_loss:
-                    best_val_loss = val_metrics["total"]
-                    patience_counter = 0
-                    ckpt_path = (
-                        Path(config.paths.checkpoint_dir) / "vae_best.pt"
-                    )
-                    save_checkpoint(
-                        path=ckpt_path,
-                        model=vae,
-                        optimizer=optimizer,
-                        scheduler=scheduler,
-                        ema=ema,
-                        config=config,
-                        step=global_step,
-                        metrics=val_metrics,
-                    )
-                    logger.info("Saved VAE checkpoint: %s", ckpt_path)
-                else:
-                    patience_counter += 1
-
-                if patience_counter >= tc.patience:
-                    logger.info("Early stopping at step %d", global_step)
-                    finish_wandb()
-                    return final_metrics
-
-                vae.train()
-
-        # end-of-epoch validation
-        val_metrics = _validate(vae, val_loader, device, beta=beta)
+        val_metrics = _validate(vae, val_loader, device, beta=beta, tokenizer=tokenizer)
         final_metrics = val_metrics
-        logger.info("epoch=%d val_loss=%.4f", epoch, val_metrics["total"])
+        logger.info(
+            "epoch=%d  val_loss=%.4f  recon=%.4f  kl=%.4f  em=%.3f  f1=%.3f  has_ans_em=%.3f  has_ans_f1=%.3f",
+            epoch,
+            val_metrics["total"],
+            val_metrics["recon"],
+            val_metrics["kl"],
+            val_metrics.get("em", float("nan")),
+            val_metrics.get("f1", float("nan")),
+            val_metrics.get("has_ans_em", float("nan")),
+            val_metrics.get("has_ans_f1", float("nan")),
+        )
         log_wandb(
             {
                 "val/loss": val_metrics["total"],
                 "val/recon": val_metrics["recon"],
                 "val/kl": val_metrics["kl"],
+                "val/em": val_metrics.get("em", float("nan")),
+                "val/f1": val_metrics.get("f1", float("nan")),
+                "val/has_ans_em": val_metrics.get("has_ans_em", float("nan")),
+                "val/has_ans_f1": val_metrics.get("has_ans_f1", float("nan")),
                 "epoch": epoch,
             },
             step=global_step,
