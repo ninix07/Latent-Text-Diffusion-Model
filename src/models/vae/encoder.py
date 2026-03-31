@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from .positional import sinusoidal_encoding as _sinusoidal_encoding
+from src.models.positional import sinusoidal_encoding as _sinusoidal_encoding
 
 
 class VAEEncoder(nn.Module):

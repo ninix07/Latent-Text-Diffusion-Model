@@ -53,10 +53,13 @@ def _validate(
             if tokenizer is not None and "all_answer_texts" in batch:
                 pred_ids = logits.argmax(dim=-1)  # (B, L)
                 for i in range(pred_ids.size(0)):
-                    # skip_special_tokens removes [NULL_ANS] → empty string for unanswerable,
-                    # which is the correct SQuAD unanswerable prediction.
+                    # Truncate to real token positions so that tokens predicted
+                    # at padding positions cannot corrupt the decoded string.
+                    length = int(answer_mask[i].sum().item())
+                    # skip_special_tokens removes [NULL_ANS] → empty string for
+                    # unanswerable, which is the correct SQuAD prediction.
                     pred_text = tokenizer.decode(
-                        pred_ids[i].tolist(), skip_special_tokens=True
+                        pred_ids[i, :length].tolist(), skip_special_tokens=True
                     ).strip()
                     all_preds.append(pred_text)
                     all_refs.append(batch["all_answer_texts"][i])

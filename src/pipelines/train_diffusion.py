@@ -48,7 +48,11 @@ def _validate(
     val_loader,
     device: torch.device,
 ) -> dict[str, float]:
-    """Compute average MSE loss over the validation set."""
+    """Compute average MSE loss over the validation set.
+
+    Supports both real latent loaders (with encoder) and mock loaders that
+    supply pre-built ``conditioning`` / ``conditioning_mask`` tensors.
+    """
     denoiser.eval()
     projection.eval()
     total_loss = 0.0
@@ -61,8 +65,14 @@ def _validate(
             z0 = batch["z_normalized"].to(device)
             B = z0.size(0)
 
-            h_q, q_mask, h_c, c_mask = _encode_batch(encoder, batch, device)
-            conditioning, cond_mask = projection(h_q, q_mask.bool(), h_c, c_mask.bool())
+            if "conditioning" in batch and "conditioning_mask" in batch:
+                conditioning = batch["conditioning"].to(device)
+                cond_mask = batch["conditioning_mask"].to(device)
+            elif encoder is not None:
+                h_q, q_mask, h_c, c_mask = _encode_batch(encoder, batch, device)
+                conditioning, cond_mask = projection(h_q, q_mask.bool(), h_c, c_mask.bool())
+            else:
+                continue  # no conditioning source available — skip batch
 
             t = torch.randint(
                 0, schedule.num_timesteps, (B,), device=device, generator=rng
@@ -104,6 +114,9 @@ def train_diffusion(
     """
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    from src.config.seed import seed_everything
+    seed_everything(config.seed)
 
     cfg_d = config.diffusion_training
     cfg_ns = config.noise_schedule
@@ -258,7 +271,6 @@ def train_diffusion(
             if (
                 step % cfg_d.val_every_n_steps == 0
                 and val_loader is not None
-                and encoder is not None
             ):
                 ema.apply()
                 val_metrics = _validate(
@@ -281,6 +293,7 @@ def train_diffusion(
                 ckpt_path = (
                     Path(config.paths.checkpoint_dir) / f"diffusion_step_{step}.pt"
                 )
+                ema.apply()
                 save_checkpoint(
                     path=ckpt_path,
                     model=combined,
@@ -291,7 +304,8 @@ def train_diffusion(
                     step=step,
                     metrics=metrics,
                 )
-                logger.info("Saved checkpoint: %s", ckpt_path)
+                ema.restore()
+                logger.info("Saved checkpoint (EMA weights): %s", ckpt_path)
 
     if not metrics:
         metrics = {"val_mse": float("nan")}

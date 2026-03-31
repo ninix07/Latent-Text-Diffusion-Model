@@ -108,6 +108,9 @@ def train_null_classifier(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    from src.config.seed import seed_everything
+    seed_everything(config.seed)
+
     cfg = config.null_classifier
     threshold = cfg.threshold
 

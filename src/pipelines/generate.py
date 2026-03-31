@@ -90,12 +90,15 @@ class GenerationPipeline:
         # 4. VAE decode → token IDs
         mask = torch.ones(B, L, dtype=torch.long, device=device)
         strategy = self.config.inference.decoding_strategy
+        # eos_token_id is 102 ([SEP]) for BERT but could be None for some
+        # tokenizers; fall back to sep_token_id in that case.
+        eos_id = self.tokenizer.eos_token_id or self.tokenizer.sep_token_id
         token_ids = self.vae.decode_to_tokens(
             z0, mask,
             strategy=strategy,
             beam_width=self.config.inference.beam_width,
             pad_id=self.tokenizer.pad_token_id,
-            eos_id=self.tokenizer.eos_token_id,
+            eos_id=eos_id,
         )
 
         # 5. Detokenize

@@ -6,14 +6,13 @@ sinusoidal positional encoding for the latent sequence, and a timestep MLP.
 
 from __future__ import annotations
 
-import math
-
 import torch
 import torch.nn as nn
 from torch import Tensor
 
 from src.models.diffusion.timestep_embedding import TimestepMLP
 from src.models.diffusion.denoiser_block import DenoiserBlock
+from src.models.positional import sinusoidal_encoding
 
 
 class ConditionalDenoiser(nn.Module):
@@ -53,8 +52,8 @@ class ConditionalDenoiser(nn.Module):
         self.input_proj = nn.Linear(latent_dim, denoiser_dim)
 
         # Sinusoidal positional encoding for latent positions
-        pe = self._build_positional_encoding(max_seq_len, denoiser_dim)
-        self.register_buffer("pos_encoding", pe)  # (1, max_seq_len, denoiser_dim)
+        pe = sinusoidal_encoding(max_seq_len, denoiser_dim).unsqueeze(0)  # (1, L, D)
+        self.register_buffer("pos_encoding", pe)
 
         # Timestep embedding MLP
         self.time_mlp = TimestepMLP(denoiser_dim, denoiser_dim)
@@ -67,18 +66,6 @@ class ConditionalDenoiser(nn.Module):
 
         # Output projection back to latent space
         self.output_proj = nn.Linear(denoiser_dim, latent_dim)
-
-    @staticmethod
-    def _build_positional_encoding(max_len: int, dim: int) -> Tensor:
-        """Create sinusoidal positional encoding table."""
-        pe = torch.zeros(max_len, dim)
-        position = torch.arange(max_len, dtype=torch.float32).unsqueeze(1)
-        div_term = torch.exp(
-            -math.log(10_000.0) * torch.arange(0, dim, 2, dtype=torch.float32) / dim
-        )
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        return pe.unsqueeze(0)  # (1, max_len, dim)
 
     def forward(
         self,
