@@ -5,6 +5,7 @@ import pytest
 from src.data.tokenization import create_tokenizer
 from src.data.squad_dataset import SQuADDataset
 from src.data.sampler import create_balanced_sampler
+from src.data.loaders import _squad_collate
 from torch.utils.data import DataLoader
 
 
@@ -27,7 +28,7 @@ def dataset(tokenizer):
 def test_balanced_ratio(dataset):
     """After sampling several batches the answerable ratio should be 30-70%."""
     sampler = create_balanced_sampler(dataset)
-    loader = DataLoader(dataset, batch_size=32, sampler=sampler, num_workers=0)
+    loader = DataLoader(dataset, batch_size=32, sampler=sampler, num_workers=0, collate_fn=_squad_collate)
 
     total = 0
     answerable = 0

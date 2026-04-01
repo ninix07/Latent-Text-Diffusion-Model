@@ -21,7 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 def _validate(
-    vae: SequenceVAE, val_loader, device: torch.device, beta: float = 1.0
+    vae: SequenceVAE,
+    val_loader,
+    device: torch.device,
+    beta: float = 1.0,
+    free_bits: float = 0.0,
 ) -> dict[str, float]:
     """Run one pass over val_loader and return averaged metrics."""
     vae.eval()
@@ -31,7 +35,9 @@ def _validate(
         for batch in val_loader:
             answer_ids = batch["answer_ids"].to(device)
             answer_mask = batch["answer_mask"].to(device)
-            _, _, _, _, loss_dict = vae(answer_ids, answer_mask, beta=beta)
+            _, _, _, _, loss_dict = vae(
+                answer_ids, answer_mask, beta=beta, free_bits=free_bits
+            )
             for k in totals:
                 totals[k] += loss_dict[k].item()
             n_batches += 1
@@ -75,14 +81,10 @@ def train_vae(
         train_loader, val_loader = create_squad_dataloaders(config, tokenizer)
 
     # ------------------------------------------------------------------ model
-    # Build a tiny embedding table to infer vocab size without loading BERT
-    try:
-        from transformers import AutoTokenizer
+    from src.data.tokenization import create_tokenizer as _create_tok
 
-        _tok = AutoTokenizer.from_pretrained(config.encoder.model_name)
-        vocab_size = len(_tok)
-    except Exception:
-        vocab_size = 30522  # BERT default
+    _tok = _create_tok(config.encoder.model_name)
+    vocab_size = len(_tok)
 
     pretrained_emb = torch.randn(vocab_size, config.vae_arch.embed_dim) * 0.02
     pretrained_emb = pretrained_emb.to(device)
@@ -123,7 +125,9 @@ def train_vae(
                 warmup_steps=tc.beta_warmup_steps,
             )
 
-            logits, z, mu, log_var, loss_dict = vae(answer_ids, answer_mask, beta=beta)
+            logits, z, mu, log_var, loss_dict = vae(
+                answer_ids, answer_mask, beta=beta, free_bits=tc.free_bits
+            )
             loss = loss_dict["total"] / tc.grad_accum_steps
             loss.backward()
 
@@ -171,7 +175,9 @@ def train_vae(
 
             # ---- validation ----
             if global_step % tc.val_every_n_steps == 0:
-                val_metrics = _validate(vae, val_loader, device, beta=beta)
+                val_metrics = _validate(
+                    vae, val_loader, device, beta=beta, free_bits=tc.free_bits
+                )
                 logger.info(
                     "step=%d val_loss=%.4f recon=%.4f kl=%.4f",
                     global_step,
@@ -217,7 +223,9 @@ def train_vae(
                 vae.train()
 
         # end-of-epoch validation
-        val_metrics = _validate(vae, val_loader, device, beta=beta)
+        val_metrics = _validate(
+            vae, val_loader, device, beta=beta, free_bits=tc.free_bits
+        )
         final_metrics = val_metrics
         logger.info("epoch=%d val_loss=%.4f", epoch, val_metrics["total"])
         log_wandb(

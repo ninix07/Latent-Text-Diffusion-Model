@@ -59,3 +59,25 @@ def test_perfect_prediction_low_loss():
 
     _, recon, _ = compute_vae_loss(logits, target, mask, mu, log_var, beta=1.0)
     assert recon.item() < 0.01
+
+
+def test_free_bits_raises_kl_floor():
+    """With free_bits > 0, the KL in the total loss should be at
+    least free_bits * LATENT_DIM even when the posterior has collapsed.
+    """
+    target = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN))
+    mask = torch.ones(BATCH_SIZE, SEQ_LEN, dtype=torch.long)
+    mu = torch.zeros(BATCH_SIZE, SEQ_LEN, LATENT_DIM)
+    log_var = torch.zeros(BATCH_SIZE, SEQ_LEN, LATENT_DIM)
+    logits = torch.randn(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE)
+
+    _, _, kl_vanilla = compute_vae_loss(
+        logits, target, mask, mu, log_var, beta=1.0, free_bits=0.0
+    )
+    assert kl_vanilla.item() == pytest.approx(0.0, abs=1e-5)
+
+    fb = 0.25
+    _, _, kl_fb = compute_vae_loss(
+        logits, target, mask, mu, log_var, beta=1.0, free_bits=fb
+    )
+    assert kl_fb.item() >= fb * LATENT_DIM - 1e-5

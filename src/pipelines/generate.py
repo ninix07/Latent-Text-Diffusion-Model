@@ -84,12 +84,17 @@ class GenerationPipeline:
         # 5. VAE decode → token IDs
         mask = torch.ones(B, L, dtype=torch.long, device=device)
         strategy = self.config.inference.decoding_strategy
+        if strategy == "beam_search":
+            decode_kwargs = dict(beam_width=self.config.inference.beam_width)
+        elif strategy == "nucleus":
+            decode_kwargs = dict(
+                top_p=self.config.inference.nucleus_top_p,
+                temperature=self.config.inference.nucleus_temperature,
+            )
+        else:
+            decode_kwargs = {}
         token_ids = self.vae.decode_to_tokens(
-            z0, mask,
-            strategy=strategy,
-            beam_width=self.config.inference.beam_width,
-            pad_id=self.tokenizer.pad_token_id,
-            eos_id=self.tokenizer.eos_token_id,
+            z0, mask, strategy=strategy, **decode_kwargs
         )
 
         # 6. Detokenize

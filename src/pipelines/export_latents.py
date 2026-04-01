@@ -50,12 +50,9 @@ def export_latents(
     saved_cfg = CfgCls.from_dict(ckpt["config"])
 
     # Need pretrained embeddings to initialise the model
-    try:
-        from transformers import AutoTokenizer
-        tok = AutoTokenizer.from_pretrained(saved_cfg.encoder.model_name)
-        vocab_size = len(tok)
-    except Exception:
-        vocab_size = 30522
+    from src.data.tokenization import create_tokenizer as _create_tok
+    _tok = _create_tok(saved_cfg.encoder.model_name)
+    vocab_size = len(_tok)
 
     pretrained_emb = torch.randn(vocab_size, saved_cfg.vae_arch.embed_dim) * 0.02
     pretrained_emb = pretrained_emb.to(device)

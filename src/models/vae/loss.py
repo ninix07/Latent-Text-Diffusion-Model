@@ -15,6 +15,7 @@ def compute_vae_loss(
     mu: torch.Tensor,
     log_var: torch.Tensor,
     beta: float,
+    free_bits: float = 0.0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute total VAE loss = recon + beta * kl.
 
@@ -25,23 +26,22 @@ def compute_vae_loss(
     mask : (B, L) — 1 for real tokens, 0 for padding.
     mu, log_var : (B, L, latent_dim)
     beta : float
+    free_bits : float
+        Min KL per latent dimension (0 = disabled).
 
     Returns
     -------
     (total_loss, recon_loss, kl_loss)
     """
-    # Reconstruction: cross-entropy ignoring padding
     B, L, V = logits.shape
-    # Flatten for cross_entropy
     logits_flat = logits.reshape(-1, V)
     target_flat = target_ids.reshape(-1)
     mask_flat = mask.reshape(-1).float()
 
     ce = F.cross_entropy(logits_flat, target_flat, reduction="none")
-    # Mask out padding positions
     recon = (ce * mask_flat).sum() / mask_flat.sum().clamp(min=1)
 
-    kl = kl_divergence(mu, log_var)
+    kl = kl_divergence(mu, log_var, free_bits=free_bits)
     total = recon + beta * kl
     return total, recon, kl
 

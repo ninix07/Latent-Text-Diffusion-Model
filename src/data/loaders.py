@@ -4,12 +4,26 @@ from __future__ import annotations
 
 from typing import Tuple
 
+import torch
 from torch.utils.data import DataLoader
 
 from src.config.schema import Config
 from src.data.tokenization import create_tokenizer
 from src.data.squad_dataset import SQuADDataset
 from src.data.sampler import create_balanced_sampler
+
+
+def _squad_collate(batch: list[dict]) -> dict:
+    """Custom collate that stacks tensors and keeps non-tensor fields as lists."""
+    elem = batch[0]
+    result = {}
+    for key in elem:
+        values = [b[key] for b in batch]
+        if isinstance(values[0], torch.Tensor):
+            result[key] = torch.stack(values)
+        else:
+            result[key] = values
+    return result
 
 
 def create_squad_dataloaders(
@@ -44,6 +58,7 @@ def create_squad_dataloaders(
         sampler=train_sampler,
         num_workers=0,
         drop_last=True,
+        collate_fn=_squad_collate,
     )
     val_loader = DataLoader(
         val_ds,
@@ -51,6 +66,7 @@ def create_squad_dataloaders(
         shuffle=False,
         num_workers=0,
         drop_last=False,
+        collate_fn=_squad_collate,
     )
     return train_loader, val_loader
 

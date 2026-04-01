@@ -111,7 +111,7 @@ class SQuADDataset(Dataset):
             "question_mask": question_mask,
             "answer_ids": answer_ids,
             "answer_mask": answer_mask,
-            "is_answerable": is_answerable,
+            "is_answerable": torch.tensor(is_answerable, dtype=torch.bool),
             "answer_text": answer_text,
             "all_answer_texts": all_answer_texts,
         }

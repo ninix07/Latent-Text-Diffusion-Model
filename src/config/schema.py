@@ -50,6 +50,7 @@ class VAETrainingConfig:
     beta_start: float = 0.0                    # KL weight at start
     beta_end: float = 1.0                      # KL weight at end
     beta_warmup_steps: int = 2000              # Steps to ramp beta
+    free_bits: float = 0.25                    # Min KL per latent dim (0 = disabled)
     val_every_n_steps: int = 500               # Validation frequency
 
 

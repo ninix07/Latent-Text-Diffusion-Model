@@ -10,7 +10,11 @@ import torch
 from torch import Tensor
 
 
-def cfg_dropout_mask(batch_size: int, rate: float) -> Tensor:
+def cfg_dropout_mask(
+    batch_size: int,
+    rate: float,
+    device: torch.device | str = "cpu",
+) -> Tensor:
     """Generate a per-sample boolean mask for CFG dropout.
 
     Parameters
@@ -19,13 +23,15 @@ def cfg_dropout_mask(batch_size: int, rate: float) -> Tensor:
         Number of samples.
     rate : float
         Probability of dropping a sample's conditioning.
+    device : torch.device or str
+        Device to create the mask on.
 
     Returns
     -------
     BoolTensor
         Shape ``(batch_size,)``. ``True`` means drop (zero out) that sample.
     """
-    return torch.rand(batch_size) < rate
+    return torch.rand(batch_size, device=device) < rate
 
 
 def apply_cfg_dropout(
@@ -48,14 +54,15 @@ def apply_cfg_dropout(
     -------
     tuple of (Tensor, Tensor)
         Modified conditioning and mask with dropped samples zeroed out
-        and their masks set to ``True`` (ignored).
+        and their masks set to ``False`` (attend to null conditioning).
     """
-    drop = cfg_dropout_mask(conditioning.size(0), dropout_rate)  # (B,)
+    drop = cfg_dropout_mask(conditioning.size(0), dropout_rate, device=conditioning.device)
     conditioning = conditioning.clone()
     conditioning_mask = conditioning_mask.clone()
 
-    # Zero conditioning and mark all positions as masked for dropped samples
+    # Zero conditioning for dropped samples but keep mask as False so the
+    # model attends to zero-valued keys (masking all keys causes NaN in softmax).
     conditioning[drop] = 0.0
-    conditioning_mask[drop] = True
+    conditioning_mask[drop] = False
 
     return conditioning, conditioning_mask

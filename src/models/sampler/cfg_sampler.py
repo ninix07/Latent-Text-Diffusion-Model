@@ -59,9 +59,11 @@ class CFGSampler:
         """
         B = z_t.shape[0]
 
-        # Build null (unconditional) conditioning
+        # Build null (unconditional) conditioning: zero values with mask=False
+        # so the model attends to zero-valued keys (not masked-out keys which
+        # would produce NaN in softmax).
         null_cond = torch.zeros_like(conditioning)
-        null_mask = torch.ones_like(conditioning_mask).bool()
+        null_mask = torch.zeros_like(conditioning_mask).bool()
 
         # Stack conditioned and unconditioned in the batch dimension
         z_double = torch.cat([z_t, z_t], dim=0)           # (2B, seq_len, latent_dim)

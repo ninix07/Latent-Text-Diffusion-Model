@@ -43,6 +43,8 @@ def evaluate(
     from src.pipelines.generate import GenerationPipeline
 
     # Load models
+    tokenizer = create_tokenizer(config.encoder.model_name)
+
     encoder = FrozenEncoder(config.encoder.model_name).to(device)
     projection = ConditioningProjection(
         encoder_dim=config.encoder.hidden_dim,
@@ -50,12 +52,7 @@ def evaluate(
     ).to(device)
 
     vae_ckpt = load_checkpoint(vae_checkpoint)
-    try:
-        from transformers import AutoTokenizer as _AT
-        _tok = _AT.from_pretrained(config.encoder.model_name)
-        _vocab_size = len(_tok)
-    except Exception:
-        _vocab_size = 30522
+    _vocab_size = len(tokenizer)
     _pretrained_emb = torch.randn(_vocab_size, config.vae_arch.embed_dim) * 0.02
     vae = SequenceVAE(config.vae_arch, pretrained_embeddings=_pretrained_emb)
     vae.load_state_dict(vae_ckpt["model_state_dict"])
@@ -103,8 +100,6 @@ def evaluate(
         map_location="cpu",
         weights_only=True,
     )
-
-    tokenizer = create_tokenizer(config.encoder.model_name)
 
     pipeline = GenerationPipeline(
         encoder=encoder,

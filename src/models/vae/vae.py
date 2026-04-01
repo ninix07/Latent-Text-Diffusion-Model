@@ -81,6 +81,7 @@ class SequenceVAE(nn.Module):
         token_ids: torch.Tensor,
         mask: torch.Tensor,
         beta: float = 1.0,
+        free_bits: float = 0.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """Full forward pass.
 
@@ -91,7 +92,9 @@ class SequenceVAE(nn.Module):
         """
         z, mu, log_var = self.encode(token_ids, mask)
         logits = self.decode(z, mask)
-        total, recon, kl = compute_vae_loss(logits, token_ids, mask, mu, log_var, beta)
+        total, recon, kl = compute_vae_loss(
+            logits, token_ids, mask, mu, log_var, beta, free_bits=free_bits
+        )
         loss_dict = {"total": total, "recon": recon, "kl": kl}
         return logits, z, mu, log_var, loss_dict
 

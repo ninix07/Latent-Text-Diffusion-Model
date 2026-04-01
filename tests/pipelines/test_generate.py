@@ -68,6 +68,8 @@ class _MockNullClassifier(torch.nn.Module):
 
 
 class _MockTokenizer:
+    pad_token_id = 0
+    eos_token_id = 102
     def decode(self, ids, skip_special_tokens=True):
         return "mock answer"
 
