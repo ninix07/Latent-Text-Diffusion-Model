@@ -106,6 +106,7 @@ def train_vae(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     from src.config.seed import seed_everything
+
     seed_everything(config.seed)
 
     # ------------------------------------------------------------------ data
@@ -143,20 +144,24 @@ def train_vae(
     param_groups = [
         {
             "params": [
-                p for n, p in vae.named_parameters()
+                p
+                for n, p in vae.named_parameters()
                 if not any(nd in n for nd in _no_decay) and p.requires_grad
             ],
             "weight_decay": tc.weight_decay,
         },
         {
             "params": [
-                p for n, p in vae.named_parameters()
+                p
+                for n, p in vae.named_parameters()
                 if any(nd in n for nd in _no_decay) and p.requires_grad
             ],
             "weight_decay": 0.0,
         },
     ]
-    optimizer = create_optimizer(param_groups, lr=tc.learning_rate, weight_decay=tc.weight_decay)
+    optimizer = create_optimizer(
+        param_groups, lr=tc.learning_rate, weight_decay=tc.weight_decay
+    )
 
     # total_steps should count optimizer updates, not raw batches, so that the
     # scheduler step() calls (inside accumulation_step) map correctly onto the
@@ -235,14 +240,14 @@ def train_vae(
                 mu_real = mu[mask_bool]  # (N_real, D)
                 active_dims = (
                     int((mu_real.var(dim=0) > 0.01).sum().item())
-                    if mu_real.shape[0] > 1 else 0
+                    if mu_real.shape[0] > 1
+                    else 0
                 )
                 kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
                 mask_3d = answer_mask.unsqueeze(-1).float()
-                kl_per_dim_mean = (
-                    (kl_per_dim * mask_3d).sum(dim=(0, 1))
-                    / mask_3d.sum().clamp(min=1)
-                )
+                kl_per_dim_mean = (kl_per_dim * mask_3d).sum(
+                    dim=(0, 1)
+                ) / mask_3d.sum().clamp(min=1)
                 # True KL (no free bits) over real positions — exposes posterior collapse
                 true_kl = kl_per_dim_mean.sum().item()
 
@@ -292,7 +297,69 @@ def train_vae(
                 step=global_step,
             )
 
-        # ---- end-of-epoch: log averaged train metrics + validate ----
+            # ---- intra-epoch validation every val_every_n_steps ----
+            if global_step % tc.val_every_n_steps == 0:
+                # Validate with EMA weights for a smoother, more stable estimate.
+                # Use tc.beta_end so the val loss composition is fixed across all
+                # epochs (early-epoch beta≈0 would make val loss look artificially
+                # good and cause premature early stopping).
+                ema.apply()
+                val_metrics = _validate(
+                    vae, val_loader, device, beta=tc.beta_end, tokenizer=tokenizer
+                )
+                ema.restore()
+                final_metrics = val_metrics
+                logger.info(
+                    "step=%d  val_loss=%.4f  recon=%.4f  kl=%.4f  em=%.3f  f1=%.3f",
+                    global_step,
+                    val_metrics["total"],
+                    val_metrics["recon"],
+                    val_metrics["kl"],
+                    val_metrics.get("em", float("nan")),
+                    val_metrics.get("f1", float("nan")),
+                )
+                log_wandb(
+                    {
+                        "val/loss": val_metrics["total"],
+                        "val/recon": val_metrics["recon"],
+                        "val/kl": val_metrics["kl"],
+                        "val/em": val_metrics.get("em", float("nan")),
+                        "val/f1": val_metrics.get("f1", float("nan")),
+                        "val/has_ans_em": val_metrics.get("has_ans_em", float("nan")),
+                        "val/has_ans_f1": val_metrics.get("has_ans_f1", float("nan")),
+                        "epoch": epoch,
+                    },
+                    step=global_step,
+                )
+
+                if val_metrics["total"] < best_val_loss:
+                    best_val_loss = val_metrics["total"]
+                    patience_counter = 0
+                    ckpt_path = Path(config.paths.checkpoint_dir) / "vae_best.pt"
+                    ema.apply()
+                    save_checkpoint(
+                        path=ckpt_path,
+                        model=vae,
+                        optimizer=optimizer,
+                        scheduler=scheduler,
+                        ema=ema,
+                        config=config,
+                        step=global_step,
+                        metrics=val_metrics,
+                    )
+                    ema.restore()
+                    logger.info("Saved VAE checkpoint (EMA weights): %s", ckpt_path)
+                else:
+                    patience_counter += 1
+
+                if patience_counter >= tc.patience:
+                    logger.info("Early stopping at step %d", global_step)
+                    finish_wandb()
+                    return final_metrics
+
+                vae.train()
+
+        # ---- end-of-epoch summary ----
         n = max(epoch_steps, 1)
         logger.info(
             "epoch=%d  train_loss=%.4f  recon=%.4f  kl=%.4f",
@@ -301,63 +368,6 @@ def train_vae(
             epoch_totals["recon"] / n,
             epoch_totals["kl"] / n,
         )
-        # Validate with EMA weights for a smoother, more stable estimate.
-        # Use tc.beta_end so the val loss composition is fixed across all epochs
-        # (early-epoch beta≈0 would make val loss look artificially good and cause
-        # premature early stopping).
-        ema.apply()
-        val_metrics = _validate(vae, val_loader, device, beta=tc.beta_end, tokenizer=tokenizer)
-        ema.restore()
-        final_metrics = val_metrics
-        logger.info(
-            "epoch=%d  val_loss=%.4f  recon=%.4f  kl=%.4f  em=%.3f  f1=%.3f  has_ans_em=%.3f  has_ans_f1=%.3f",
-            epoch,
-            val_metrics["total"],
-            val_metrics["recon"],
-            val_metrics["kl"],
-            val_metrics.get("em", float("nan")),
-            val_metrics.get("f1", float("nan")),
-            val_metrics.get("has_ans_em", float("nan")),
-            val_metrics.get("has_ans_f1", float("nan")),
-        )
-        log_wandb(
-            {
-                "val/loss": val_metrics["total"],
-                "val/recon": val_metrics["recon"],
-                "val/kl": val_metrics["kl"],
-                "val/em": val_metrics.get("em", float("nan")),
-                "val/f1": val_metrics.get("f1", float("nan")),
-                "val/has_ans_em": val_metrics.get("has_ans_em", float("nan")),
-                "val/has_ans_f1": val_metrics.get("has_ans_f1", float("nan")),
-                "epoch": epoch,
-            },
-            step=global_step,
-        )
-
-        if val_metrics["total"] < best_val_loss:
-            best_val_loss = val_metrics["total"]
-            patience_counter = 0
-            ckpt_path = Path(config.paths.checkpoint_dir) / "vae_best.pt"
-            # Save the EMA-smoothed model as the best checkpoint.
-            ema.apply()
-            save_checkpoint(
-                path=ckpt_path,
-                model=vae,
-                optimizer=optimizer,
-                scheduler=scheduler,
-                ema=ema,
-                config=config,
-                step=global_step,
-                metrics=val_metrics,
-            )
-            ema.restore()
-            logger.info("Saved VAE checkpoint (EMA weights): %s", ckpt_path)
-        else:
-            patience_counter += 1
-
-        if patience_counter >= tc.patience:
-            logger.info("Early stopping at epoch %d", epoch)
-            break
 
     finish_wandb()
     return final_metrics

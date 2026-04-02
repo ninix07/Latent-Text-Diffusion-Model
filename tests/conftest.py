@@ -5,9 +5,17 @@ import torch
 from transformers import AutoTokenizer
 
 from src.config.schema import (
-    Config, PathConfig, EncoderConfig, VAEArchConfig, VAETrainingConfig,
-    QualityGateConfig, DenoiserArchConfig, NoiseScheduleConfig,
-    DiffusionTrainingConfig, NullClassifierConfig, InferenceConfig,
+    Config,
+    PathConfig,
+    EncoderConfig,
+    VAEArchConfig,
+    VAETrainingConfig,
+    QualityGateConfig,
+    DenoiserArchConfig,
+    NoiseScheduleConfig,
+    DiffusionTrainingConfig,
+    NullClassifierConfig,
+    InferenceConfig,
 )
 
 
@@ -45,6 +53,7 @@ def tiny_config() -> Config:
             beta_end=1.0,
             beta_warmup_steps=50,
             free_bits=0.0,
+            val_every_n_steps=10,
         ),
         quality_gate=QualityGateConfig(),
         denoiser_arch=DenoiserArchConfig(

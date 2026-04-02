@@ -86,10 +86,14 @@ class SQuADDataset(Dataset):
 
         # Context & question
         context_ids, context_mask = _tokenize_and_pad(
-            self.tokenizer, example["context"], self.max_context_len,
+            self.tokenizer,
+            example["context"],
+            self.max_context_len,
         )
         question_ids, question_mask = _tokenize_and_pad(
-            self.tokenizer, example["question"], self.max_question_len,
+            self.tokenizer,
+            example["question"],
+            self.max_question_len,
         )
 
         # Answer handling
@@ -107,7 +111,10 @@ class SQuADDataset(Dataset):
         # and these boundary tokens waste two latent positions on a constant signal
         # that is stripped by skip_special_tokens=True at generation time anyway.
         answer_ids, answer_mask = _tokenize_and_pad(
-            self.tokenizer, answer_text, self.max_answer_len, add_special_tokens=False,
+            self.tokenizer,
+            answer_text,
+            self.max_answer_len,
+            add_special_tokens=False,
         )
 
         return {
@@ -117,7 +124,7 @@ class SQuADDataset(Dataset):
             "question_mask": question_mask,
             "answer_ids": answer_ids,
             "answer_mask": answer_mask,
-            "is_answerable": is_answerable,
+            "is_answerable": torch.tensor(is_answerable, dtype=torch.bool),
             "answer_text": answer_text,
             "all_answer_texts": all_answer_texts,
         }

@@ -18,6 +18,7 @@ from src.pipelines.train_vae import train_vae
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_fake_loader(config: Config, n_batches: int = 4) -> DataLoader:
     """Return a DataLoader yielding random batches shaped like SQuAD batches."""
     B = config.vae_training.batch_size
@@ -63,11 +64,13 @@ def _make_tiny_vae(config: Config) -> nn.Module:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_one_epoch_runs(tiny_config: Config):
     """Training for 2 steps should complete without raising."""
     tc = tiny_config.vae_training
     from dataclasses import replace as _replace
-    new_tc = _replace(tc, epochs=1, patience=10)
+
+    new_tc = _replace(tc, epochs=1, patience=10, val_every_n_steps=2)
     cfg = _replace(tiny_config, vae_training=new_tc)
 
     device = torch.device("cpu")
@@ -88,9 +91,9 @@ def test_one_epoch_runs(tiny_config: Config):
     tv_mod.SequenceVAE = _FakeVAECls
 
     try:
-        metrics = train_vae(cfg, device=device,
-                            train_loader=train_loader,
-                            val_loader=val_loader)
+        metrics = train_vae(
+            cfg, device=device, train_loader=train_loader, val_loader=val_loader
+        )
     finally:
         tv_mod.SequenceVAE = old_cls
 
@@ -107,8 +110,9 @@ def test_loss_decreases(tiny_config: Config):
         patience=100,
         learning_rate=1e-2,
         beta_start=0.0,
-        beta_end=0.0,            # zero KL makes recon easier to minimise
+        beta_end=0.0,  # zero KL makes recon easier to minimise
         beta_warmup_steps=1,
+        val_every_n_steps=1000,  # skip val during loss measurement run
     )
     cfg = _replace(tiny_config, vae_training=new_tc)
     device = torch.device("cpu")
@@ -171,9 +175,7 @@ def test_loss_decreases(tiny_config: Config):
     vae_instance.forward = _tracked_forward
 
     try:
-        train_vae(cfg, device=device,
-                  train_loader=train_loader,
-                  val_loader=val_loader)
+        train_vae(cfg, device=device, train_loader=train_loader, val_loader=val_loader)
     finally:
         tv_mod.SequenceVAE = old_cls
         vae_instance.forward = original_forward
@@ -181,6 +183,6 @@ def test_loss_decreases(tiny_config: Config):
     assert len(losses) >= 5, "Expected at least 5 recorded loss values"
     first_avg = sum(losses[:3]) / 3
     last_avg = sum(losses[-3:]) / 3
-    assert last_avg < first_avg, (
-        f"Loss should decrease: first_avg={first_avg:.4f} last_avg={last_avg:.4f}"
-    )
+    assert (
+        last_avg < first_avg
+    ), f"Loss should decrease: first_avg={first_avg:.4f} last_avg={last_avg:.4f}"
