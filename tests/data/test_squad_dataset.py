@@ -65,8 +65,7 @@ def test_unanswerable_uses_null(dataset, null_token_id):
     for i in range(len(dataset)):
         item = dataset[i]
         if not item["is_answerable"]:
-            # The [CLS] token comes first in BERT tokenization, then [NULL_ANS]
-            # Check that the null token is present in the answer_ids
+            # Answers are tokenized without [CLS]/[SEP]; [NULL_ANS] should be present.
             assert null_token_id in item["answer_ids"].tolist()
             return
     pytest.skip("No unanswerable item found")

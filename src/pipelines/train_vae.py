@@ -132,14 +132,38 @@ def train_vae(
     vae = SequenceVAE(config.vae_arch, pretrained_embeddings=pretrained_emb).to(device)
 
     tc = config.vae_training
-    optimizer = create_optimizer(
-        vae.parameters(), lr=tc.learning_rate, weight_decay=tc.weight_decay
-    )
 
-    # Estimate total steps
+    # Separate weight decay groups: exclude biases and log_tau.
+    # log_tau needs to grow freely (decay fights convergence); biases shouldn't
+    # be decayed (standard practice). output_head.linear.weight is L2-normalized
+    # before use so its magnitude doesn't affect logit direction — but since it is
+    # now tied to encoder.embedding.weight we leave it in the decay group so
+    # embedding vectors stay bounded.
+    _no_decay = {"bias", "log_tau"}
+    param_groups = [
+        {
+            "params": [
+                p for n, p in vae.named_parameters()
+                if not any(nd in n for nd in _no_decay) and p.requires_grad
+            ],
+            "weight_decay": tc.weight_decay,
+        },
+        {
+            "params": [
+                p for n, p in vae.named_parameters()
+                if any(nd in n for nd in _no_decay) and p.requires_grad
+            ],
+            "weight_decay": 0.0,
+        },
+    ]
+    optimizer = create_optimizer(param_groups, lr=tc.learning_rate, weight_decay=tc.weight_decay)
+
+    # total_steps should count optimizer updates, not raw batches, so that the
+    # scheduler step() calls (inside accumulation_step) map correctly onto the
+    # declared schedule length regardless of grad_accum_steps.
     steps_per_epoch = max(len(train_loader), 1)
-    total_steps = tc.epochs * steps_per_epoch
-    scheduler = create_scheduler(optimizer, tc.warmup_steps, total_steps)
+    total_optimizer_steps = (tc.epochs * steps_per_epoch) // max(tc.grad_accum_steps, 1)
+    scheduler = create_scheduler(optimizer, tc.warmup_steps, total_optimizer_steps)
 
     ema = EMAManager(vae, decay=0.999, start_step=0)
 
@@ -204,13 +228,22 @@ def train_vae(
             # Accumulate train metrics for epoch average
             with torch.no_grad():
                 std = torch.exp(0.5 * log_var)
-                mu_flat = mu.reshape(-1, mu.size(-1))
-                active_dims = int((mu_flat.var(dim=0) > 0.01).sum().item())
-                kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
-                kl_per_dim_mean = kl_per_dim.reshape(-1, kl_per_dim.size(-1)).mean(
-                    dim=0
+                # Mask out padding positions so diagnostics reflect only real tokens.
+                # Without masking, padding positions (no loss gradient) inflate
+                # active_dims and true_kl, giving a falsely healthy picture.
+                mask_bool = answer_mask.bool()  # (B, L)
+                mu_real = mu[mask_bool]  # (N_real, D)
+                active_dims = (
+                    int((mu_real.var(dim=0) > 0.01).sum().item())
+                    if mu_real.shape[0] > 1 else 0
                 )
-                # True KL (no free bits) — exposes posterior collapse
+                kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
+                mask_3d = answer_mask.unsqueeze(-1).float()
+                kl_per_dim_mean = (
+                    (kl_per_dim * mask_3d).sum(dim=(0, 1))
+                    / mask_3d.sum().clamp(min=1)
+                )
+                # True KL (no free bits) over real positions — exposes posterior collapse
                 true_kl = kl_per_dim_mean.sum().item()
 
             step_metrics = {

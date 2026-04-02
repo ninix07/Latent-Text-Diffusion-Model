@@ -32,6 +32,7 @@ def _tokenize_and_pad(
     tokenizer: PreTrainedTokenizerFast,
     text: str,
     max_len: int,
+    add_special_tokens: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Tokenize *text*, truncate/pad to *max_len*, return (ids, mask)."""
     enc = tokenizer(
@@ -40,6 +41,7 @@ def _tokenize_and_pad(
         padding="max_length",
         truncation=True,
         return_tensors="pt",
+        add_special_tokens=add_special_tokens,
     )
     return enc["input_ids"].squeeze(0), enc["attention_mask"].squeeze(0)
 
@@ -101,8 +103,11 @@ class SQuADDataset(Dataset):
             answer_text = NULL_TOKEN
             is_answerable = False
 
+        # Answers do not need [CLS]/[SEP] — the VAE encoder/decoder are not BERT
+        # and these boundary tokens waste two latent positions on a constant signal
+        # that is stripped by skip_special_tokens=True at generation time anyway.
         answer_ids, answer_mask = _tokenize_and_pad(
-            self.tokenizer, answer_text, self.max_answer_len,
+            self.tokenizer, answer_text, self.max_answer_len, add_special_tokens=False,
         )
 
         return {

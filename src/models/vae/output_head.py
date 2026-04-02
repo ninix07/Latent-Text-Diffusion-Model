@@ -37,7 +37,10 @@ class OutputProjection(nn.Module):
             with torch.no_grad():
                 self.linear.weight.copy_(pretrained_embeddings.detach())
 
-        self.log_tau = nn.Parameter(torch.zeros(1))
+        # Initialize tau ≈ 20 so the softmax is meaningfully peaked from step 1.
+        # At log_tau=0 (tau=1) the initial CE loss ≈ log(30K) ≈ 10.3 with near-zero
+        # gradients; log_tau=3.0 (tau≈20) sharpens the softmax immediately.
+        self.log_tau = nn.Parameter(torch.tensor([3.0]))
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         """Compute cosine-similarity logits scaled by temperature.

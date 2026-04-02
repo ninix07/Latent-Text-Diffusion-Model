@@ -42,7 +42,7 @@ class VAETrainingConfig:
     learning_rate: float = 1e-4                # Peak learning rate
     batch_size: int = 64                       # Training batch size
     epochs: int = 30                           # Maximum training epochs
-    patience: int = 5                          # Early stopping patience
+    patience: int = 12                         # Early stopping patience (≥ beta_warmup epochs)
     warmup_steps: int = 500                    # LR scheduler warmup
     weight_decay: float = 0.01                 # AdamW weight decay
     grad_clip_max_norm: float = 1.0            # Gradient clipping threshold

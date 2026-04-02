@@ -60,6 +60,12 @@ class SequenceVAE(nn.Module):
             pretrained_embeddings=pretrained_embeddings,
         )
 
+        # Tie encoder input embeddings with output-projection weights (standard LM
+        # weight tying). Halves embedding parameter count (~23M for 30K×768) and
+        # routes reconstruction gradients directly through the encoder's embedding
+        # matrix, giving it a much stronger training signal.
+        self.output_head.linear.weight = self.encoder.embedding.weight
+
     def encode(
         self,
         token_ids: torch.Tensor,

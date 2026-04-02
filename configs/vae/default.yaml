@@ -11,7 +11,7 @@ vae_training:
   learning_rate: 1.0e-4              # Peak learning rate for AdamW
   batch_size: 64                     # Samples per training batch
   epochs: 30                         # Maximum training epochs
-  patience: 5                        # Early stopping patience (val loss)
+  patience: 12                       # Early stopping patience — must exceed beta warmup epochs (~11)
   warmup_steps: 500                  # LR warmup steps
   weight_decay: 0.01                 # AdamW weight decay
   grad_clip_max_norm: 1.0            # Max gradient norm
