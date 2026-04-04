@@ -36,32 +36,30 @@ def create_scheduler(
     optimizer: torch.optim.Optimizer,
     warmup_steps: int,
     total_steps: int,
+    min_lr_ratio: float = 0.01,
 ) -> LambdaLR:
     """Create a linear-warmup + cosine-decay LR scheduler.
 
     The learning rate:
     - Linearly increases from 0 to 1.0 over the first ``warmup_steps``.
-    - Then cosine-decays from 1.0 to 0 over the remaining steps.
+    - Then cosine-decays from 1.0 to ``min_lr_ratio`` over the remaining steps.
 
     Parameters
     ----------
     optimizer : torch.optim.Optimizer
     warmup_steps : int
     total_steps : int
-
-    Returns
-    -------
-    LambdaLR
+    min_lr_ratio : float
+        Minimum LR as a fraction of peak LR (default 0.01 = 1%).
     """
 
     def lr_lambda(current_step: int) -> float:
         if current_step < warmup_steps:
-            # Linear warmup
             return float(current_step) / float(max(1, warmup_steps))
-        # Cosine decay
         progress = float(current_step - warmup_steps) / float(
             max(1, total_steps - warmup_steps)
         )
-        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        cosine = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return max(min_lr_ratio, cosine)
 
     return LambdaLR(optimizer, lr_lambda)
