@@ -26,6 +26,7 @@ def _validate(
     device: torch.device,
     beta: float = 1.0,
     free_bits: float = 0.0,
+    target_kl: float = 0.0,
     tokenizer=None,
 ) -> dict[str, float]:
     """Run one pass over val_loader and return averaged metrics.
@@ -47,7 +48,11 @@ def _validate(
             answer_ids = batch["answer_ids"].to(device)
             answer_mask = batch["answer_mask"].to(device)
             logits, _, _, _, loss_dict = vae(
-                answer_ids, answer_mask, beta=beta, free_bits=free_bits
+                answer_ids,
+                answer_mask,
+                beta=beta,
+                free_bits=free_bits,
+                target_kl=target_kl,
             )
             for k in totals:
                 totals[k] += loss_dict[k].item()
@@ -231,7 +236,11 @@ def train_vae(
                 )
 
             logits, z, mu, log_var, loss_dict = vae(
-                answer_ids, answer_mask, beta=beta, free_bits=tc.free_bits
+                answer_ids,
+                answer_mask,
+                beta=beta,
+                free_bits=tc.free_bits,
+                target_kl=tc.target_kl,
             )
             loss = loss_dict["total"] / tc.grad_accum_steps
             loss.backward()
@@ -246,23 +255,15 @@ def train_vae(
 
             # Accumulate train metrics for epoch average
             with torch.no_grad():
-                std = torch.exp(0.5 * log_var)
-                # Mask out padding positions so diagnostics reflect only real tokens.
-                # Without masking, padding positions (no loss gradient) inflate
-                # active_dims and true_kl, giving a falsely healthy picture.
-                mask_bool = answer_mask.bool()  # (B, L)
-                mu_real = mu[mask_bool]  # (N_real, D)
+                # mu, log_var, z are now pooled: (B, D) — no padding positions
+                # to worry about (Bug 7 fixed by architectural change).
+                std = torch.exp(0.5 * log_var)  # (B, D)
                 active_dims = (
-                    int((mu_real.var(dim=0) > 0.01).sum().item())
-                    if mu_real.shape[0] > 1
-                    else 0
+                    int((mu.var(dim=0) > 0.01).sum().item()) if mu.shape[0] > 1 else 0
                 )
-                kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
-                mask_3d = answer_mask.unsqueeze(-1).float()
-                kl_per_dim_mean = (kl_per_dim * mask_3d).sum(
-                    dim=(0, 1)
-                ) / mask_3d.sum().clamp(min=1)
-                # True KL (no free bits) over real positions — exposes posterior collapse
+                kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, D)
+                kl_per_dim_mean = kl_per_dim.mean(dim=0)  # (D,)
+                # True KL (no free bits) — exposes posterior collapse
                 true_kl = kl_per_dim_mean.sum().item()
 
             step_metrics = {
@@ -319,8 +320,13 @@ def train_vae(
                 # good and cause premature early stopping).
                 ema.apply()
                 val_metrics = _validate(
-                    vae, val_loader, device, beta=tc.beta_end,
-                    free_bits=tc.free_bits, tokenizer=tokenizer,
+                    vae,
+                    val_loader,
+                    device,
+                    beta=tc.beta_end,
+                    free_bits=tc.free_bits,
+                    target_kl=tc.target_kl,
+                    tokenizer=tokenizer,
                 )
                 ema.restore()
                 final_metrics = val_metrics

@@ -61,7 +61,9 @@ def export_latents(
     pretrained_emb = torch.randn(vocab_size, saved_cfg.vae_arch.embed_dim) * 0.5
     pretrained_emb = pretrained_emb.to(device)
 
-    vae = SequenceVAE(saved_cfg.vae_arch, pretrained_embeddings=pretrained_emb).to(device)
+    vae = SequenceVAE(saved_cfg.vae_arch, pretrained_embeddings=pretrained_emb).to(
+        device
+    )
     vae.load_state_dict(ckpt["model_state_dict"])
     vae.eval()
 
@@ -107,11 +109,11 @@ def export_latents(
     val_data = _encode_split(val_loader)
 
     # ------------------------------------------------------------------ normalisation stats
-    # Computed from train split only: mean/std per position per dim
-    # latents shape: (N, L, D)
+    # Computed from train split only: mean/std per latent dim
+    # latents shape: (N, D) — pooled per sentence
     train_latents = train_data["latents_raw"]
-    norm_mean = train_latents.mean(dim=0)   # (L, D)
-    norm_std = train_latents.std(dim=0).clamp(min=1e-6)  # (L, D)
+    norm_mean = train_latents.mean(dim=0)  # (D,)
+    norm_std = train_latents.std(dim=0).clamp(min=1e-6)  # (D,)
     norm_stats = {"mean": norm_mean, "std": norm_std}
 
     # Apply normalisation and rename key to match LatentDataset expectation
@@ -130,9 +132,7 @@ def export_latents(
     passed, report = run_quality_gate(vae, val_loader, saved_cfg, device)
     if not passed:
         failed = [k for k, v in report.items() if not v["passed"]]
-        raise RuntimeError(
-            f"Quality gate failed on checks: {failed}. Report: {report}"
-        )
+        raise RuntimeError(f"Quality gate failed on checks: {failed}. Report: {report}")
     logger.info("Quality gate passed.")
 
     # ------------------------------------------------------------------ save

@@ -1,4 +1,4 @@
-"""VAE encoder: embeds token ids and produces per-position μ and log_var."""
+"""VAE encoder: embeds token ids and produces a pooled μ and log_var."""
 
 from __future__ import annotations
 
@@ -9,10 +9,14 @@ from src.models.positional import sinusoidal_encoding as _sinusoidal_encoding
 
 
 class VAEEncoder(nn.Module):
-    """Transformer encoder that maps token ids to latent (μ, log_var).
+    """Bidirectional transformer encoder that maps token ids to a **pooled**
+    latent ``(μ, log_var)``.
 
-    Output shape: ``(B, max_answer_len, latent_dim)`` — one latent vector per
-    position with no sequence compression.
+    The transformer processes all positions with full attention, then a
+    masked mean pool collapses the sequence to a single vector before the
+    latent projection heads.
+
+    Output shape: ``(B, latent_dim)`` — one latent vector per sentence.
     """
 
     def __init__(
@@ -34,7 +38,9 @@ class VAEEncoder(nn.Module):
             with torch.no_grad():
                 self.embedding.weight.copy_(pretrained_embeddings)
         else:
-            raise ValueError("vocab_size must be inferred from pretrained_embeddings or set explicitly")
+            raise ValueError(
+                "vocab_size must be inferred from pretrained_embeddings or set explicitly"
+            )
 
         # --- Positional encoding (sinusoidal, non-learnable) ---
         pe = _sinusoidal_encoding(max_answer_len, embed_dim)
@@ -50,7 +56,7 @@ class VAEEncoder(nn.Module):
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        # --- Projection to latent space ---
+        # --- Projection to latent space (operates on pooled vector) ---
         self.proj = nn.Linear(embed_dim, latent_dim)
         self.mu_head = nn.Linear(latent_dim, latent_dim)
         self.logvar_head = nn.Linear(latent_dim, latent_dim)
@@ -68,14 +74,16 @@ class VAEEncoder(nn.Module):
         max_answer_len: int,
     ) -> "VAEEncoder":
         emb = torch.randn(vocab_size, embed_dim)
-        return cls(embed_dim, latent_dim, num_layers, num_heads, dropout, max_answer_len, emb)
+        return cls(
+            embed_dim, latent_dim, num_layers, num_heads, dropout, max_answer_len, emb
+        )
 
     def forward(
         self,
         token_ids: torch.Tensor,
         mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Encode tokens to latent parameters.
+        """Encode tokens to pooled latent parameters.
 
         Parameters
         ----------
@@ -84,7 +92,7 @@ class VAEEncoder(nn.Module):
 
         Returns
         -------
-        (μ, log_var) each of shape (B, L, latent_dim)
+        (μ, log_var) each of shape (B, latent_dim)
         """
         x = self.embedding(token_ids) + self.pe[:, : token_ids.size(1), :]
 
@@ -92,7 +100,11 @@ class VAEEncoder(nn.Module):
         pad_mask = mask == 0
         x = self.transformer(x, src_key_padding_mask=pad_mask)
 
-        h = self.proj(x)
+        # Masked mean pool over the sequence dimension
+        mask_3d = mask.unsqueeze(-1).float()  # (B, L, 1)
+        x_pooled = (x * mask_3d).sum(dim=1) / mask_3d.sum(dim=1).clamp(min=1)  # (B, D)
+
+        h = self.proj(x_pooled)
         mu = self.mu_head(h)
         log_var = self.logvar_head(h).clamp(-6.0, 4.0)
         return mu, log_var

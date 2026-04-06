@@ -39,6 +39,7 @@ def tiny_config() -> Config:
             num_heads=2,
             dropout=0.0,
             max_answer_len=10,
+            num_latent_tokens=2,
         ),
         vae_training=VAETrainingConfig(
             learning_rate=1e-3,
@@ -53,6 +54,7 @@ def tiny_config() -> Config:
             beta_end=1.0,
             beta_warmup_steps=50,
             free_bits=0.0,
+            target_kl=0.0,
             val_every_n_steps=10,
         ),
         quality_gate=QualityGateConfig(),

@@ -31,12 +31,13 @@ class EncoderConfig:
 class VAEArchConfig:
     """VAE architecture hyperparameters."""
 
-    latent_dim: int = 64  # Latent space dimensionality
+    latent_dim: int = 128  # Latent space dimensionality
     embed_dim: int = 768  # Internal embedding dimension
     num_layers: int = 4  # Transformer layers in encoder/decoder
     num_heads: int = 8  # Attention heads
     dropout: float = 0.1  # Dropout rate
     max_answer_len: int = 50  # Max answer token length
+    num_latent_tokens: int = 8  # Pseudo-tokens for latent KV injection
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,8 @@ class VAETrainingConfig:
     beta_end: float = 1.0  # KL weight at end
     beta_warmup_steps: int = 10000  # Steps to ramp beta
     beta_schedule: str = "cyclical"  # "monotonic" or "cyclical"
-    beta_cycles: int = 4  # Number of cycles (only used with "cyclical")
+    beta_cycles: int = 40  # Number of cycles (only used with "cyclical")
+    target_kl: float = 2.0  # KL ceiling — stop penalizing KL when above this
     beta_cycle_ratio: float = 0.5  # Fraction of cycle spent ramping
     free_bits: float = 0.25  # Min KL per latent dim (free bits)
     val_every_n_steps: int = 500  # Validation frequency (steps)

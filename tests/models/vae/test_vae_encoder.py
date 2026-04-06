@@ -44,15 +44,16 @@ def sample_batch():
 def test_output_shapes(encoder, sample_batch):
     ids, mask = sample_batch
     mu, log_var = encoder(ids, mask)
-    assert mu.shape == (BATCH_SIZE, MAX_ANSWER_LEN, LATENT_DIM)
-    assert log_var.shape == (BATCH_SIZE, MAX_ANSWER_LEN, LATENT_DIM)
+    assert mu.shape == (BATCH_SIZE, LATENT_DIM)
+    assert log_var.shape == (BATCH_SIZE, LATENT_DIM)
 
 
-def test_no_compression(encoder, sample_batch):
+def test_pooled_output(encoder, sample_batch):
+    """Encoder produces a single pooled vector per sample, not per-position."""
     ids, mask = sample_batch
     mu, log_var = encoder(ids, mask)
-    assert mu.size(1) == ids.size(1)
-    assert log_var.size(1) == ids.size(1)
+    assert mu.dim() == 2
+    assert log_var.dim() == 2
 
 
 def test_pretrained_embed_init(pretrained_emb):

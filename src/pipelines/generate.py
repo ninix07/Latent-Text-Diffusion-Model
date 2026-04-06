@@ -61,9 +61,8 @@ class GenerationPipeline:
 
         # 2. DDIM sampling (with optional best-of-N)
         B = context_ids.size(0)
-        L = self.config.vae_arch.max_answer_len
         D = self.config.vae_arch.latent_dim
-        z_shape = (B, L, D)
+        z_shape = (B, D)
 
         def denoiser_fn(z_t, t_tensor):
             return self.sampler.predict_noise(z_t, t_tensor, conditioning, cond_mask)
@@ -77,9 +76,13 @@ class GenerationPipeline:
             from src.models.sampler.best_of_n import best_of_n_sample
 
             def _generate_z0() -> torch.Tensor:
-                return self.sampler.ddim.sample(denoiser_fn, z_shape, device) * std + mean
+                return (
+                    self.sampler.ddim.sample(denoiser_fn, z_shape, device) * std + mean
+                )
 
-            z0, confidence = best_of_n_sample(_generate_z0, n_samples, self.null_classifier)
+            z0, confidence = best_of_n_sample(
+                _generate_z0, n_samples, self.null_classifier
+            )
         else:
             z0 = self.sampler.ddim.sample(denoiser_fn, z_shape, device) * std + mean
             confidence = self.null_classifier(z0)  # (B,)
@@ -87,31 +90,40 @@ class GenerationPipeline:
         is_answerable = (confidence >= threshold).tolist()
         confidence_vals = confidence.tolist()
 
-        # 4. VAE decode → token IDs
-        mask = torch.ones(B, L, dtype=torch.long, device=device)
+        # 4. VAE decode → token IDs (autoregressive from pooled latent)
         strategy = self.config.inference.decoding_strategy
-        # eos_token_id is 102 ([SEP]) for BERT but could be None for some
-        # tokenizers; fall back to sep_token_id in that case.
-        eos_id = self.tokenizer.eos_token_id or self.tokenizer.sep_token_id
+        # Beam search requires autoregressive specialisation not yet
+        # implemented; fall back to greedy in that case.
+        if strategy == "beam_search":
+            strategy = "greedy"
         token_ids = self.vae.decode_to_tokens(
-            z0, mask,
+            z0,
             strategy=strategy,
-            beam_width=self.config.inference.beam_width,
-            pad_id=self.tokenizer.pad_token_id,
-            eos_id=eos_id,
+            temperature=self.config.inference.nucleus_temperature,
+            top_p=self.config.inference.nucleus_top_p,
         )
 
         # 5. Detokenize
         results = []
         for i in range(B):
-            ans_bool = bool(is_answerable[i]) if isinstance(is_answerable, list) else bool(is_answerable)
-            conf = float(confidence_vals[i]) if isinstance(confidence_vals, list) else float(confidence_vals)
+            ans_bool = (
+                bool(is_answerable[i])
+                if isinstance(is_answerable, list)
+                else bool(is_answerable)
+            )
+            conf = (
+                float(confidence_vals[i])
+                if isinstance(confidence_vals, list)
+                else float(confidence_vals)
+            )
             if ans_bool:
                 ids = token_ids[i].tolist()
                 text = self.tokenizer.decode(ids, skip_special_tokens=True)
             else:
                 text = ""
-            results.append({"answer_text": text, "is_answerable": ans_bool, "confidence": conf})
+            results.append(
+                {"answer_text": text, "is_answerable": ans_bool, "confidence": conf}
+            )
 
         return results
 

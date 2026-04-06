@@ -47,7 +47,7 @@ def run_quality_gate(
     all_token_correct = 0
     all_token_total = 0
     all_kl: list[torch.Tensor] = []
-    all_mu: list[torch.Tensor] = []  # (B, L, D) stacked
+    all_mu: list[torch.Tensor] = []  # (B, D) — already pooled
     all_answerable: list[torch.Tensor] = []
 
     with torch.no_grad():
@@ -66,23 +66,20 @@ def run_quality_gate(
             all_token_total += total.item()
 
             # --- KL ---
-            # kl from loss_dict is already mean-reduced
-            # recompute per-sample for aggregation
-            kl_per_pos = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B,L,D)
-            mask_exp = answer_mask.unsqueeze(-1).float()
-            kl_masked = (kl_per_pos * mask_exp).sum() / mask_exp.sum().clamp(min=1)
-            all_kl.append(kl_masked.cpu())
+            # mu, log_var are pooled: (B, D) — no sequence masking needed
+            kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, D)
+            kl_batch = kl_per_dim.mean(dim=0).sum()  # scalar
+            all_kl.append(kl_batch.cpu())
 
             # --- Collect mu for active dims + centroid distance ---
-            # Collapse to (B, D) by mean-pooling over sequence
-            mu_pooled = (mu * mask_exp).sum(dim=1) / mask_exp.sum(dim=1).clamp(min=1)  # (B, D)
-            all_mu.append(mu_pooled.cpu())
+            # mu is already (B, D) — no pooling needed
+            all_mu.append(mu.cpu())
             all_answerable.append(is_answerable.cpu())
 
     recon_accuracy = all_token_correct / max(all_token_total, 1)
     mean_kl = float(torch.stack(all_kl).mean())
 
-    mu_cat = torch.cat(all_mu, dim=0)         # (N, D)
+    mu_cat = torch.cat(all_mu, dim=0)  # (N, D)
     ans_cat = torch.cat(all_answerable, dim=0)  # (N,)
 
     # Active dims: variance across samples

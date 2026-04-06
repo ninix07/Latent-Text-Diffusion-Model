@@ -52,18 +52,23 @@ class TestDotNotation:
 
 class TestLoadConfig:
     def test_multi_yaml_merge(self):
-        config = load_config([
-            "configs/base.yaml",
-            "configs/vae/default.yaml",
-            "configs/diffusion/default.yaml",
-        ])
-        assert config.vae_arch.latent_dim == 64
+        config = load_config(
+            [
+                "configs/base.yaml",
+                "configs/vae/default.yaml",
+                "configs/diffusion/default.yaml",
+            ]
+        )
+        assert config.vae_arch.latent_dim == 128
         assert config.denoiser_arch.denoiser_dim == 512
 
     def test_cli_overrides_applied(self):
         config = load_config(
-            ["configs/base.yaml", "configs/vae/default.yaml",
-             "configs/diffusion/default.yaml"],
-            cli_overrides={"vae_arch.latent_dim": "128"},
+            [
+                "configs/base.yaml",
+                "configs/vae/default.yaml",
+                "configs/diffusion/default.yaml",
+            ],
+            cli_overrides={"vae_arch.latent_dim": "256"},
         )
-        assert config.vae_arch.latent_dim == 128
+        assert config.vae_arch.latent_dim == 256

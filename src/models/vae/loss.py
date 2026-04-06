@@ -5,6 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
+
 def compute_vae_loss(
     logits: torch.Tensor,
     target_ids: torch.Tensor,
@@ -13,6 +14,7 @@ def compute_vae_loss(
     log_var: torch.Tensor,
     beta: float,
     free_bits: float = 0.0,
+    target_kl: float = 0.0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute total VAE loss = recon + beta * kl.
 
@@ -21,10 +23,14 @@ def compute_vae_loss(
     logits : (B, L, V)
     target_ids : (B, L)
     mask : (B, L) — 1 for real tokens, 0 for padding.
-    mu, log_var : (B, L, latent_dim)
+    mu, log_var : (B, latent_dim)  — pooled latent parameters.
     beta : float
     free_bits : float
         Minimum KL per latent dimension (prevents full posterior collapse).
+    target_kl : float
+        KL ceiling.  When total KL exceeds this value the KL penalty is
+        zeroed out so the encoder is not pushed to over-compress.  Set to
+        0.0 to disable (no ceiling).
 
     Returns
     -------
@@ -39,18 +45,20 @@ def compute_vae_loss(
     ce = F.cross_entropy(logits_flat, target_flat, reduction="none")
     recon = (ce * mask_flat).sum() / mask_flat.sum().clamp(min=1)
 
-    # KL: masked mean over real (non-padding) positions, sum over latent dims.
-    # Averaging over padding positions adds noise because the encoder still
-    # produces mu/log_var at those positions despite them carrying no content.
-    mask_3d = mask.unsqueeze(-1).float()  # (B, L, 1)
-    kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, L, D)
-    kl_per_dim = (kl_raw * mask_3d).sum(dim=(0, 1)) / mask_3d.sum().clamp(min=1)  # (D,)
+    # KL: pooled latent is (B, D) — no sequence dimension to mask.
+    # Mean over batch, per latent dimension, then sum.
+    kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, D)
+    kl_per_dim = kl_raw.mean(dim=0)  # (D,)
     if free_bits > 0.0:
         kl = kl_per_dim.clamp(min=free_bits).sum()
     else:
         kl = kl_per_dim.sum()
 
-    total = recon + beta * kl
+    # Target KL ceiling: if KL already exceeds the target, stop penalizing.
+    if target_kl > 0.0 and kl.item() > target_kl:
+        total = recon
+    else:
+        total = recon + beta * kl
     return total, recon, kl
 
 

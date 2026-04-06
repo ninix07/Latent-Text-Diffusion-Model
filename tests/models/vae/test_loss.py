@@ -14,8 +14,8 @@ LATENT_DIM = 16
 def test_padding_ignored():
     """Changing logits/targets at padding positions should not affect loss."""
     torch.manual_seed(0)
-    mu = torch.zeros(BATCH_SIZE, SEQ_LEN, LATENT_DIM)
-    log_var = torch.zeros(BATCH_SIZE, SEQ_LEN, LATENT_DIM)
+    mu = torch.zeros(BATCH_SIZE, LATENT_DIM)
+    log_var = torch.zeros(BATCH_SIZE, LATENT_DIM)
 
     # Mask: first 5 positions real, last 5 padding
     mask = torch.zeros(BATCH_SIZE, SEQ_LEN, dtype=torch.long)
@@ -48,8 +48,8 @@ def test_perfect_prediction_low_loss():
     """One-hot logits matching targets should give near-zero recon loss."""
     target = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN))
     mask = torch.ones(BATCH_SIZE, SEQ_LEN, dtype=torch.long)
-    mu = torch.zeros(BATCH_SIZE, SEQ_LEN, LATENT_DIM)
-    log_var = torch.zeros(BATCH_SIZE, SEQ_LEN, LATENT_DIM)
+    mu = torch.zeros(BATCH_SIZE, LATENT_DIM)
+    log_var = torch.zeros(BATCH_SIZE, LATENT_DIM)
 
     # Create very confident logits
     logits = torch.full((BATCH_SIZE, SEQ_LEN, VOCAB_SIZE), -100.0)
@@ -67,8 +67,8 @@ def test_free_bits_raises_kl_floor():
     """
     target = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN))
     mask = torch.ones(BATCH_SIZE, SEQ_LEN, dtype=torch.long)
-    mu = torch.zeros(BATCH_SIZE, SEQ_LEN, LATENT_DIM)
-    log_var = torch.zeros(BATCH_SIZE, SEQ_LEN, LATENT_DIM)
+    mu = torch.zeros(BATCH_SIZE, LATENT_DIM)
+    log_var = torch.zeros(BATCH_SIZE, LATENT_DIM)
     logits = torch.randn(BATCH_SIZE, SEQ_LEN, VOCAB_SIZE)
 
     _, _, kl_vanilla = compute_vae_loss(

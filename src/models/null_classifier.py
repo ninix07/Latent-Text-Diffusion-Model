@@ -46,30 +46,28 @@ class NullClassifier(nn.Module):
         Parameters
         ----------
         z0 : Tensor
-            Latent representations, shape ``(B, seq_len, latent_dim)``.
+            Latent representations, shape ``(B, latent_dim)`` (pooled) or
+            ``(B, seq_len, latent_dim)`` (legacy 3D — mean-pooled internally).
 
         Returns
         -------
         Tensor
             Per-sample probabilities, shape ``(B,)``.
         """
-        # Mean-pool over sequence dimension
-        pooled = z0.mean(dim=1)            # (B, latent_dim)
-        logit = self.mlp(pooled)           # (B, 1)
-        return logit.squeeze(-1)           # (B,)
+        if z0.dim() == 3:
+            z0 = z0.mean(dim=1)  # (B, latent_dim)
+        logit = self.mlp(z0)  # (B, 1)
+        return logit.squeeze(-1)  # (B,)
 
     # ------------------------------------------------------------------
-    def predict(
-        self, z0: Tensor, threshold: float = 0.5
-    ) -> tuple[bool, float]:
+    def predict(self, z0: Tensor, threshold: float = 0.5) -> tuple[bool, float]:
         """Classify a single sample (or the first sample in a batch).
 
         Parameters
         ----------
         z0 : Tensor
-            Latent, shape ``(B, seq_len, latent_dim)`` or
-            ``(seq_len, latent_dim)``.  Only the first batch element is
-            used when B > 1.
+            Latent, shape ``(B, latent_dim)``, ``(latent_dim,)``,
+            or ``(B, seq_len, latent_dim)`` (legacy).
         threshold : float
             Decision boundary; default 0.5.
 
@@ -81,8 +79,8 @@ class NullClassifier(nn.Module):
             Raw classifier score in [0, 1].
         """
         with torch.no_grad():
-            if z0.dim() == 2:
-                z0 = z0.unsqueeze(0)      # add batch dim
-            probs = self.forward(z0)      # (B,)
+            if z0.dim() == 1:
+                z0 = z0.unsqueeze(0)  # add batch dim
+            probs = self.forward(z0)  # (B,)
             conf = float(probs[0].item())
         return conf >= threshold, conf

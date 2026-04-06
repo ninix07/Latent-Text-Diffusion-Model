@@ -13,6 +13,7 @@ NUM_HEADS = 2
 DROPOUT = 0.0
 MAX_ANSWER_LEN = 10
 VOCAB_SIZE = 100
+NUM_LATENT_TOKENS = 2
 BATCH_SIZE = 4
 
 
@@ -25,6 +26,7 @@ def config():
         num_heads=NUM_HEADS,
         dropout=DROPOUT,
         max_answer_len=MAX_ANSWER_LEN,
+        num_latent_tokens=NUM_LATENT_TOKENS,
     )
 
 
@@ -50,9 +52,9 @@ def test_full_forward(vae, sample_batch):
     logits, z, mu, log_var, loss_dict = vae(ids, mask, beta=0.5)
 
     assert logits.shape == (BATCH_SIZE, MAX_ANSWER_LEN, VOCAB_SIZE)
-    assert z.shape == (BATCH_SIZE, MAX_ANSWER_LEN, LATENT_DIM)
-    assert mu.shape == (BATCH_SIZE, MAX_ANSWER_LEN, LATENT_DIM)
-    assert log_var.shape == (BATCH_SIZE, MAX_ANSWER_LEN, LATENT_DIM)
+    assert z.shape == (BATCH_SIZE, LATENT_DIM)
+    assert mu.shape == (BATCH_SIZE, LATENT_DIM)
+    assert log_var.shape == (BATCH_SIZE, LATENT_DIM)
     assert "total" in loss_dict
     assert "recon" in loss_dict
     assert "kl" in loss_dict
@@ -68,6 +70,6 @@ def test_encode_deterministic(vae, sample_batch):
 def test_decode_to_tokens(vae, sample_batch):
     ids, mask = sample_batch
     z, _, _ = vae.encode(ids, mask, deterministic=True)
-    tokens = vae.decode_to_tokens(z, mask, strategy="greedy")
+    tokens = vae.decode_to_tokens(z, strategy="greedy")
     assert tokens.dtype == torch.long or tokens.dtype == torch.int64
     assert tokens.shape == (BATCH_SIZE, MAX_ANSWER_LEN)

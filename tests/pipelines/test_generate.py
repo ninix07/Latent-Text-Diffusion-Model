@@ -14,10 +14,13 @@ from src.pipelines.generate import GenerationPipeline
 # Minimal mock components
 # ---------------------------------------------------------------------------
 
+
 class _MockEncoder:
     """Frozen encoder that returns random hidden states."""
+
     def parameters(self):
         return iter([torch.zeros(1)])
+
     def encode(self, ids, mask):
         B, L = ids.shape
         return torch.randn(B, L, 64)
@@ -27,6 +30,7 @@ class _MockProjection(torch.nn.Module):
     def __init__(self, out_dim=32):
         super().__init__()
         self.out_dim = out_dim
+
     def forward(self, h_q, q_mask, h_c, c_mask):
         B = h_q.size(0)
         L = h_q.size(1) + h_c.size(1)
@@ -38,15 +42,17 @@ class _MockVAE(torch.nn.Module):
         super().__init__()
         self.max_answer_len = max_answer_len
         self.vocab_size = vocab_size
-    def decode_to_tokens(self, z, mask, strategy="greedy", **kw):
-        B, L, D = z.shape
-        return torch.randint(0, self.vocab_size, (B, L))
+
+    def decode_to_tokens(self, z, strategy="greedy", **kw):
+        B = z.size(0)
+        return torch.randint(0, self.vocab_size, (B, self.max_answer_len))
 
 
 class _MockDenoiser(torch.nn.Module):
     def __init__(self, latent_dim=16):
         super().__init__()
         self.latent_dim = latent_dim
+
     def forward(self, z_t, t, cond, cond_mask):
         return torch.randn_like(z_t)
 
@@ -77,8 +83,8 @@ class _MockTokenizer:
 
 def _make_pipeline(tiny_config: Config) -> GenerationPipeline:
     norm_stats = {
-        "mean": torch.zeros(1, 1, tiny_config.vae_arch.latent_dim),
-        "std": torch.ones(1, 1, tiny_config.vae_arch.latent_dim),
+        "mean": torch.zeros(1, tiny_config.vae_arch.latent_dim),
+        "std": torch.ones(1, tiny_config.vae_arch.latent_dim),
     }
     return GenerationPipeline(
         encoder=_MockEncoder(),
@@ -96,10 +102,15 @@ def _make_pipeline(tiny_config: Config) -> GenerationPipeline:
 # Tests
 # ---------------------------------------------------------------------------
 
+
 def test_single_generation(tiny_config: Config):
     """generate() should return a list containing a dict with expected keys."""
     pipeline = _make_pipeline(tiny_config)
-    L, C, Q = 10, tiny_config.encoder.max_context_len, tiny_config.encoder.max_question_len
+    L, C, Q = (
+        10,
+        tiny_config.encoder.max_context_len,
+        tiny_config.encoder.max_question_len,
+    )
 
     results = pipeline.generate(
         context_ids=torch.zeros(1, C, dtype=torch.long),
