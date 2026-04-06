@@ -191,7 +191,7 @@ def train_diffusion(
     combined = torch.nn.ModuleList([denoiser, projection])
     ema = EMAManager(combined, decay=cfg_d.ema_decay, start_step=cfg_d.ema_start_step)
 
-    total_steps = cfg_d.epochs * len(train_loader)
+    total_steps = (cfg_d.epochs * len(train_loader)) // max(cfg_d.grad_accum_steps, 1)
     scheduler = create_scheduler(
         optimizer, warmup_steps=cfg_d.warmup_steps, total_steps=max(total_steps, 1)
     )

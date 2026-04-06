@@ -42,4 +42,4 @@ def kl_divergence(
     mask_3d = mask.unsqueeze(-1).float()  # (B, L, 1)
     # sum over (B, L) masked positions → (D,), divide by total real positions, then sum over D
     n_real = mask_3d.sum().clamp(min=1)
-    return (kl_per_dim * mask_3d).sum(dim=(0, 1)) / n_real
+    return ((kl_per_dim * mask_3d).sum(dim=(0, 1)) / n_real).sum()

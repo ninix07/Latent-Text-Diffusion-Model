@@ -68,3 +68,41 @@ def compute_beta(
         return end
     t = min(step / warmup_steps, 1.0)
     return start + (end - start) * t
+
+
+def compute_cyclical_beta(
+    step: int,
+    total_steps: int,
+    start: float,
+    end: float,
+    n_cycles: int = 4,
+    ratio: float = 0.5,
+) -> float:
+    """Cyclical beta annealing (Fu et al. 2019).
+
+    Within each cycle, beta linearly ramps from *start* to *end* over
+    the first *ratio* fraction, then stays at *end* for the remainder.
+
+    Parameters
+    ----------
+    step : int
+        Current training step (0-indexed).
+    total_steps : int
+        Total number of training steps.
+    start : float
+        Beta value at the beginning of each cycle.
+    end : float
+        Beta value at the end of the ramp.
+    n_cycles : int
+        Number of annealing cycles over the full run.
+    ratio : float
+        Fraction of each cycle spent ramping (0 < ratio <= 1).
+    """
+    if total_steps <= 0 or n_cycles <= 0:
+        return end
+    cycle_len = total_steps / n_cycles
+    tau = (step % cycle_len) / cycle_len
+    if tau < ratio:
+        t = tau / ratio
+        return start + (end - start) * t
+    return end

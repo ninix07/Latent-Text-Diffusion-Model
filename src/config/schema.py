@@ -51,9 +51,12 @@ class VAETrainingConfig:
     weight_decay: float = 0.01  # AdamW weight decay
     grad_clip_max_norm: float = 1.0  # Gradient clipping threshold
     grad_accum_steps: int = 1  # Gradient accumulation steps
-    beta_start: float = 0.0  # KL weight at start
+    beta_start: float = 0.01  # KL weight at start
     beta_end: float = 1.0  # KL weight at end
-    beta_warmup_steps: int = 2000  # Steps to ramp beta
+    beta_warmup_steps: int = 10000  # Steps to ramp beta
+    beta_schedule: str = "cyclical"  # "monotonic" or "cyclical"
+    beta_cycles: int = 4  # Number of cycles (only used with "cyclical")
+    beta_cycle_ratio: float = 0.5  # Fraction of cycle spent ramping
     free_bits: float = 0.25  # Min KL per latent dim (free bits)
     val_every_n_steps: int = 500  # Validation frequency (steps)
 

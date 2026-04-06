@@ -10,7 +10,7 @@ import torch
 
 from src.config.schema import Config
 from src.models.vae.vae import SequenceVAE
-from src.models.vae.loss import compute_beta
+from src.models.vae.loss import compute_beta, compute_cyclical_beta
 from src.training.ema import EMAManager
 from src.training.optimizer import create_optimizer, create_scheduler
 from src.training.grad_utils import clip_gradients, accumulation_step
@@ -25,6 +25,7 @@ def _validate(
     val_loader,
     device: torch.device,
     beta: float = 1.0,
+    free_bits: float = 0.0,
     tokenizer=None,
 ) -> dict[str, float]:
     """Run one pass over val_loader and return averaged metrics.
@@ -45,7 +46,9 @@ def _validate(
         for batch in val_loader:
             answer_ids = batch["answer_ids"].to(device)
             answer_mask = batch["answer_mask"].to(device)
-            logits, _, _, _, loss_dict = vae(answer_ids, answer_mask, beta=beta)
+            logits, _, _, _, loss_dict = vae(
+                answer_ids, answer_mask, beta=beta, free_bits=free_bits
+            )
             for k in totals:
                 totals[k] += loss_dict[k].item()
             n_batches += 1
@@ -179,6 +182,7 @@ def train_vae(
     patience_counter = 0
     global_step = 0
     final_metrics: dict[str, float] = {}
+    total_training_steps = tc.epochs * steps_per_epoch
 
     for epoch in range(tc.epochs):
         vae.train()
@@ -209,12 +213,22 @@ def train_vae(
             answer_ids = batch["answer_ids"].to(device)
             answer_mask = batch["answer_mask"].to(device)
 
-            beta = compute_beta(
-                global_step,
-                start=tc.beta_start,
-                end=tc.beta_end,
-                warmup_steps=tc.beta_warmup_steps,
-            )
+            if tc.beta_schedule == "cyclical":
+                beta = compute_cyclical_beta(
+                    global_step,
+                    total_steps=total_training_steps,
+                    start=tc.beta_start,
+                    end=tc.beta_end,
+                    n_cycles=tc.beta_cycles,
+                    ratio=tc.beta_cycle_ratio,
+                )
+            else:
+                beta = compute_beta(
+                    global_step,
+                    start=tc.beta_start,
+                    end=tc.beta_end,
+                    warmup_steps=tc.beta_warmup_steps,
+                )
 
             logits, z, mu, log_var, loss_dict = vae(
                 answer_ids, answer_mask, beta=beta, free_bits=tc.free_bits
@@ -305,7 +319,8 @@ def train_vae(
                 # good and cause premature early stopping).
                 ema.apply()
                 val_metrics = _validate(
-                    vae, val_loader, device, beta=tc.beta_end, tokenizer=tokenizer
+                    vae, val_loader, device, beta=tc.beta_end,
+                    free_bits=tc.free_bits, tokenizer=tokenizer,
                 )
                 ema.restore()
                 final_metrics = val_metrics

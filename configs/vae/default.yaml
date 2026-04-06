@@ -16,9 +16,12 @@ vae_training:
   weight_decay: 0.01 # AdamW weight decay
   grad_clip_max_norm: 1.0 # Max gradient norm
   grad_accum_steps: 1 # Gradient accumulation steps
-  beta_start: 0.0 # KL weight start (annealing)
+  beta_start: 0.01 # KL weight start (small positive avoids ignoring KL entirely)
   beta_end: 1.0 # KL weight end
-  beta_warmup_steps: 2000 # Steps to linearly ramp beta
+  beta_warmup_steps: 10000 # Steps to linearly ramp beta (gradual to avoid loss spike)
+  beta_schedule: cyclical # "monotonic" or "cyclical" (Fu et al. 2019)
+  beta_cycles: 4 # Number of annealing cycles (cyclical only)
+  beta_cycle_ratio: 0.5 # Fraction of each cycle spent ramping
   free_bits: 0.25 # Min KL per latent dim (free bits)
   val_every_n_steps: 500 # Validate every N training steps
 
