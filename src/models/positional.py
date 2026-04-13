@@ -9,6 +9,8 @@ import torch
 
 def sinusoidal_encoding(max_len: int, dim: int) -> torch.Tensor:
     """Return a ``(max_len, dim)`` sinusoidal positional-encoding table."""
+    if dim % 2 != 0:
+        raise ValueError(f"sinusoidal_encoding requires even dim, got {dim}")
     pos = torch.arange(max_len).unsqueeze(1).float()
     div = torch.exp(torch.arange(0, dim, 2).float() * (-math.log(10000.0) / dim))
     pe = torch.zeros(max_len, dim)

@@ -54,7 +54,7 @@ def tiny_config() -> Config:
             beta_end=1.0,
             beta_warmup_steps=50,
             free_bits=0.0,
-            target_kl=0.0,
+            target_kl=None,
             val_every_n_steps=10,
         ),
         quality_gate=QualityGateConfig(),

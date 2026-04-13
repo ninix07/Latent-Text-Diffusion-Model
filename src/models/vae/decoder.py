@@ -141,7 +141,13 @@ class VAEDecoder(nn.Module):
         attn_mask = self._build_attn_mask(K, L, x.device)
         # Padding mask (bool): True = ignore. Latent prefix is never padded.
         latent_pad = torch.zeros(B, K, device=mask.device, dtype=torch.bool)
-        dec_pad = mask == 0  # True where padding
+        # Shift mask to align with dec_input: <start> is always real, and
+        # dec_input[i] = token_ids[i-1], so we take mask[:, :-1] as the tail.
+        shifted_mask = torch.cat(
+            [torch.ones(B, 1, dtype=mask.dtype, device=mask.device), mask[:, :-1]],
+            dim=1,
+        )
+        dec_pad = shifted_mask == 0
         full_pad_mask = torch.cat([latent_pad, dec_pad], dim=1)
 
         x = self.transformer(
@@ -210,7 +216,7 @@ class VAEDecoder(nn.Module):
                 cumsum = sorted_probs.cumsum(dim=-1)
                 cutoff = (cumsum - sorted_probs) > top_p
                 sorted_probs[cutoff] = 0.0
-                sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True)
+                sorted_probs = sorted_probs / sorted_probs.sum(dim=-1, keepdim=True).clamp(min=1e-8)
                 sampled = torch.multinomial(sorted_probs, 1).squeeze(-1)
                 next_id = sorted_idx.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
 

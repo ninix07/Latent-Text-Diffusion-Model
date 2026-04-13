@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 import torch
 import torch.nn.functional as F
 
@@ -14,7 +16,7 @@ def compute_vae_loss(
     log_var: torch.Tensor,
     beta: float,
     free_bits: float = 0.0,
-    target_kl: float = 0.0,
+    target_kl: Optional[float] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute total VAE loss = recon + beta * kl.
 
@@ -27,10 +29,10 @@ def compute_vae_loss(
     beta : float
     free_bits : float
         Minimum KL per latent dimension (prevents full posterior collapse).
-    target_kl : float
-        KL ceiling.  When total KL exceeds this value the KL penalty is
-        zeroed out so the encoder is not pushed to over-compress.  Set to
-        0.0 to disable (no ceiling).
+    target_kl : float or None
+        KL ceiling.  The KL contribution to the loss is clamped to this
+        value, so gradients stop flowing once KL exceeds the target.
+        Set to None to disable (no ceiling, full KL is always penalized).
 
     Returns
     -------
@@ -46,19 +48,19 @@ def compute_vae_loss(
     recon = (ce * mask_flat).sum() / mask_flat.sum().clamp(min=1)
 
     # KL: pooled latent is (B, D) — no sequence dimension to mask.
-    # Mean over batch, per latent dimension, then sum.
+    # Clamp per-sample per-dim BEFORE averaging over the batch so that
+    # individual samples cannot collapse a dimension while the batch mean
+    # stays above the free-bits floor (Kingma et al. 2016 free bits).
     kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, D)
-    kl_per_dim = kl_raw.mean(dim=0)  # (D,)
     if free_bits > 0.0:
-        kl = kl_per_dim.clamp(min=free_bits).sum()
+        kl = kl_raw.clamp(min=free_bits).mean(dim=0).sum()
     else:
-        kl = kl_per_dim.sum()
+        kl = kl_raw.mean(dim=0).sum()
 
-    # Target KL ceiling: if KL already exceeds the target, stop penalizing.
-    if target_kl > 0.0 and kl.item() > target_kl:
-        total = recon
-    else:
-        total = recon + beta * kl
+    # Target KL ceiling: clamp KL contribution in the loss so gradients stop
+    # once KL exceeds the target (prevents over-regularisation).
+    kl_for_loss = kl.clamp(max=target_kl) if target_kl is not None else kl
+    total = recon + beta * kl_for_loss
     return total, recon, kl
 
 

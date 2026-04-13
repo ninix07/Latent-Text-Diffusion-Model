@@ -98,7 +98,7 @@ class SequenceVAE(nn.Module):
         mask: torch.Tensor,
         beta: float = 1.0,
         free_bits: float = 0.0,
-        target_kl: float = 0.0,
+        target_kl: float | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """Full forward pass (teacher-forced).
 

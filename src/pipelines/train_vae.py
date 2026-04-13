@@ -26,7 +26,7 @@ def _validate(
     device: torch.device,
     beta: float = 1.0,
     free_bits: float = 0.0,
-    target_kl: float = 0.0,
+    target_kl: float | None = None,
     tokenizer=None,
 ) -> dict[str, float]:
     """Run one pass over val_loader and return averaged metrics.
@@ -38,7 +38,7 @@ def _validate(
     from src.evaluation.squad_metrics import compute_squad_metrics
 
     vae.eval()
-    totals: dict[str, float] = {"total": 0.0, "recon": 0.0, "kl": 0.0}
+    totals: dict[str, float] = {"total": 0.0, "recon": 0.0, "kl": 0.0, "true_kl": 0.0}
     n_batches = 0
     all_preds: list[str] = []
     all_refs: list[list[str]] = []
@@ -47,15 +47,18 @@ def _validate(
         for batch in val_loader:
             answer_ids = batch["answer_ids"].to(device)
             answer_mask = batch["answer_mask"].to(device)
-            logits, _, _, _, loss_dict = vae(
+            logits, _, mu, log_var, loss_dict = vae(
                 answer_ids,
                 answer_mask,
                 beta=beta,
                 free_bits=free_bits,
                 target_kl=target_kl,
             )
-            for k in totals:
+            for k in ("total", "recon", "kl"):
                 totals[k] += loss_dict[k].item()
+            # Raw KL (no free-bits floor) to detect posterior collapse
+            kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
+            totals["true_kl"] += kl_raw.mean(dim=0).sum().item()
             n_batches += 1
 
             if tokenizer is not None and "all_answer_texts" in batch:
@@ -178,7 +181,7 @@ def train_vae(
     total_optimizer_steps = (tc.epochs * steps_per_epoch) // max(tc.grad_accum_steps, 1)
     scheduler = create_scheduler(optimizer, tc.warmup_steps, total_optimizer_steps)
 
-    ema = EMAManager(vae, decay=0.999, start_step=0)
+    ema = EMAManager(vae, decay=tc.ema_decay, start_step=0)
 
     # ------------------------------------------------------------------ wandb
     init_wandb(config.to_dict(), project="latent-diffusion-text-vae")
@@ -344,6 +347,7 @@ def train_vae(
                         "val/loss": val_metrics["total"],
                         "val/recon": val_metrics["recon"],
                         "val/kl": val_metrics["kl"],
+                        "val/true_kl": val_metrics["true_kl"],
                         "val/em": val_metrics.get("em", float("nan")),
                         "val/f1": val_metrics.get("f1", float("nan")),
                         "val/has_ans_em": val_metrics.get("has_ans_em", float("nan")),
@@ -373,7 +377,7 @@ def train_vae(
                 else:
                     patience_counter += 1
 
-                if patience_counter >= tc.patience:
+                if patience_counter > tc.patience:
                     logger.info("Early stopping at step %d", global_step)
                     finish_wandb()
                     return final_metrics
@@ -389,6 +393,16 @@ def train_vae(
             epoch_totals["recon"] / n,
             epoch_totals["kl"] / n,
         )
+
+    # Ensure a final validation pass ran even if the last step wasn't a val step
+    if not final_metrics:
+        ema.apply()
+        final_metrics = _validate(
+            vae, val_loader, device,
+            beta=tc.beta_end, free_bits=tc.free_bits,
+            target_kl=tc.target_kl, tokenizer=tokenizer,
+        )
+        ema.restore()
 
     finish_wandb()
     return final_metrics

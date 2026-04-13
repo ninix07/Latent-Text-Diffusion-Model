@@ -16,6 +16,7 @@ def reparameterize(
     """
     if deterministic:
         return mu
+    log_var = log_var.clamp(-10.0, 6.0)  # guard against overflow before exp
     std = torch.exp(0.5 * log_var)
     eps = torch.randn_like(std)
     return mu + std * eps

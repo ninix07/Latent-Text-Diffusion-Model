@@ -57,11 +57,12 @@ class VAETrainingConfig:
     beta_warmup_steps: int = 10000  # Steps to ramp beta
     beta_schedule: str = "cyclical"  # "monotonic" or "cyclical"
     beta_cycles: int = 40  # Number of cycles (only used with "cyclical")
-    target_kl: float = (
-        0.0  # KL ceiling — stop penalizing when KL exceeds this (0.0 = disabled)
+    target_kl: Optional[float] = (
+        None  # KL ceiling — clamp KL contribution at this value (None = disabled)
     )
     beta_cycle_ratio: float = 0.5  # Fraction of cycle spent ramping
     free_bits: float = 0.25  # Min KL per latent dim (free bits)
+    ema_decay: float = 0.999  # EMA decay rate for validation weights
     val_every_n_steps: int = 500  # Validation frequency (steps)
 
 
