@@ -23,9 +23,9 @@ vae_training:
   beta_schedule: monotonic # "monotonic" or "cyclical" (Fu et al. 2019)
   beta_cycles: 40 # Number of annealing cycles (cyclical only)
   beta_cycle_ratio: 0.5 # Fraction of each cycle spent ramping
-  free_bits: 0.25 # Min KL per latent dim (free bits)
+  free_bits: 0.1 # Min KL per latent dim (free bits)
   ema_decay: 0.999 # EMA decay rate for validation weights
-  target_kl: null # KL ceiling — clamp KL contribution at this value (null = disabled)
+  target_kl: 20.0 # KL ceiling — clamp KL contribution at this value (null = disabled)
   val_every_n_steps: 500 # Validate every N training steps
 
 quality_gate:
