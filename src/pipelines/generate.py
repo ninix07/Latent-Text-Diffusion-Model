@@ -61,8 +61,9 @@ class GenerationPipeline:
 
         # 2. DDIM sampling (with optional best-of-N)
         B = context_ids.size(0)
+        K = self.config.vae_arch.num_latent_tokens
         D = self.config.vae_arch.latent_dim
-        z_shape = (B, D)
+        z_shape = (B, K, D)
 
         def denoiser_fn(z_t, t_tensor):
             return self.sampler.predict_noise(z_t, t_tensor, conditioning, cond_mask)

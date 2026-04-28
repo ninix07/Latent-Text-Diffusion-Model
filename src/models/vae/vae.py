@@ -14,12 +14,13 @@ from .loss import compute_vae_loss
 
 
 class SequenceVAE(nn.Module):
-    """Full sequence VAE: encode token ids → pooled latent → causal decode → logits.
+    """Full sequence VAE: encode token ids → sequence latent ``(B, K, D)`` →
+    causal decode → logits.
 
-    The encoder pools the sequence into a single latent vector ``(B, D)``.
-    The decoder is a **causal** transformer that injects the latent via a
-    prefix of pseudo-tokens (KV cache injection).  During training the
-    decoder is teacher-forced; during generation it decodes autoregressively.
+    The encoder produces ``num_latent_tokens`` latent vectors (one per
+    Perceiver query).  The decoder is a **causal** transformer that injects
+    the K latent vectors as a KV-cache prefix.  During training the decoder
+    is teacher-forced; during generation it decodes autoregressively.
 
     Parameters
     ----------
@@ -48,6 +49,7 @@ class SequenceVAE(nn.Module):
             num_heads=config.num_heads,
             dropout=config.dropout,
             max_answer_len=config.max_answer_len,
+            num_latent_tokens=config.num_latent_tokens,
             pretrained_embeddings=pretrained_embeddings,
         )
         self.decoder = VAEDecoder(
@@ -77,7 +79,10 @@ class SequenceVAE(nn.Module):
         mask: torch.Tensor,
         deterministic: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Encode to pooled latent space.  Returns ``(z, μ, log_var)`` each ``(B, D)``."""
+        """Encode to sequence latent space.
+
+        Returns ``(z, μ, log_var)`` each of shape ``(B, K, latent_dim)``.
+        """
         mu, log_var = self.encoder(token_ids, mask)
         z = reparameterize(mu, log_var, deterministic=deterministic)
         return z, mu, log_var
@@ -99,8 +104,18 @@ class SequenceVAE(nn.Module):
         beta: float = 1.0,
         free_bits: float = 0.0,
         target_kl: float | None = None,
+        noise_aug_sigma: float = 0.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """Full forward pass (teacher-forced).
+
+        Parameters
+        ----------
+        noise_aug_sigma : float
+            Extra Gaussian noise std to add to the sampled latent before
+            decoding. The KL is still computed against the un-perturbed
+            posterior, so this only affects the decoder's gradient signal.
+            Used to make the decoder robust to slightly-imperfect latents
+            produced at diffusion sampling time. ``0.0`` disables it.
 
         Returns
         -------
@@ -108,10 +123,18 @@ class SequenceVAE(nn.Module):
             loss_dict has keys ``"total"``, ``"recon"``, ``"kl"``.
         """
         z, mu, log_var = self.encode(token_ids, mask)
+
+        # Optional decoder noise augmentation: only the latent fed to the
+        # decoder is perturbed. mu/log_var are unchanged so the KL term
+        # continues to regularise the *true* posterior.
+        z_decode = z
+        if noise_aug_sigma > 0.0 and self.training:
+            z_decode = z + torch.randn_like(z) * noise_aug_sigma
+
         # Pass the REAL mask so the decoder properly masks padding (Bug 2).
         # The causal architecture prevents the decoder from exploiting mask
         # boundaries because it can only see previous positions.
-        logits = self.decode(token_ids, z, mask)
+        logits = self.decode(token_ids, z_decode, mask)
         total, recon, kl = compute_vae_loss(
             logits, token_ids, mask, mu, log_var, beta, free_bits, target_kl
         )
@@ -129,7 +152,7 @@ class SequenceVAE(nn.Module):
 
         Parameters
         ----------
-        z : (B, latent_dim) — pooled latent.
+        z : (B, K, latent_dim) — sequence of latent vectors from the encoder.
         strategy : ``"greedy"`` or ``"nucleus"``.
         max_len : int, optional — defaults to ``config.max_answer_len``.
         """

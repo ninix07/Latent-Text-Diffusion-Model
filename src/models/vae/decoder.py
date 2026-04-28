@@ -11,9 +11,9 @@ from src.models.positional import sinusoidal_encoding as _sinusoidal_encoding
 class VAEDecoder(nn.Module):
     """Causal transformer decoder with latent prefix (KV cache injection).
 
-    The pooled latent *z* is projected into ``num_latent_tokens`` pseudo-tokens
-    that are **prepended** to the decoder sequence.  A custom attention mask
-    ensures:
+    The latent *z* is a sequence of ``num_latent_tokens`` vectors that are
+    each projected into ``embed_dim`` and **prepended** to the decoder
+    sequence.  A custom attention mask ensures:
 
     * All positions can attend to the latent prefix tokens.
     * Decoder token positions obey causal (autoregressive) ordering.
@@ -55,8 +55,10 @@ class VAEDecoder(nn.Module):
         pe = _sinusoidal_encoding(max_answer_len, embed_dim)
         self.register_buffer("pe", pe.unsqueeze(0))  # (1, L, D)
 
-        # Project pooled latent z → K prefix tokens for KV injection
-        self.latent_proj = nn.Linear(latent_dim, num_latent_tokens * embed_dim)
+        # Project per-position latent (latent_dim → embed_dim). The K dimension
+        # of z already matches num_latent_tokens — the encoder produces
+        # exactly one latent vector per prefix slot.
+        self.latent_proj = nn.Linear(latent_dim, embed_dim)
 
         # Transformer encoder used with a custom causal+prefix mask so that
         # the architecture is effectively a causal decoder with KV injection.
@@ -96,9 +98,13 @@ class VAEDecoder(nn.Module):
         return mask
 
     def _project_latent(self, z: torch.Tensor) -> torch.Tensor:
-        """``(B, latent_dim)`` → ``(B, K, embed_dim)``."""
-        B = z.size(0)
-        return self.latent_proj(z).view(B, self.num_latent_tokens, self.embed_dim)
+        """``(B, K, latent_dim)`` → ``(B, K, embed_dim)``."""
+        if z.dim() != 3 or z.size(1) != self.num_latent_tokens:
+            raise ValueError(
+                f"Decoder expects z of shape (B, {self.num_latent_tokens}, latent_dim); "
+                f"got {tuple(z.shape)}"
+            )
+        return self.latent_proj(z)
 
     # ------------------------------------------------------------------
     # Forward (teacher-forced training)
@@ -115,7 +121,7 @@ class VAEDecoder(nn.Module):
         Parameters
         ----------
         token_ids : Tensor (B, L) — target answer tokens.
-        z         : Tensor (B, latent_dim) — pooled latent.
+        z         : Tensor (B, K, latent_dim) — sequence of latent vectors.
         mask      : Tensor (B, L) — 1 for real tokens, 0 for padding.
 
         Returns
@@ -175,7 +181,7 @@ class VAEDecoder(nn.Module):
 
         Parameters
         ----------
-        z          : (B, latent_dim) — pooled latent.
+        z          : (B, K, latent_dim) — sequence of latent vectors.
         max_len    : int — maximum tokens to generate.
         output_head: OutputProjection module (hidden → logits).
         strategy   : ``"greedy"`` or ``"nucleus"``.

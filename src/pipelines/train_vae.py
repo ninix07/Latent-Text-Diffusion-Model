@@ -56,7 +56,8 @@ def _validate(
             )
             for k in ("total", "recon", "kl"):
                 totals[k] += loss_dict[k].item()
-            # Raw KL (no free-bits floor) to detect posterior collapse
+            # Raw KL (no free-bits floor) to detect posterior collapse.
+            # mu/log_var are (B, K, D); mean over batch then sum over (K, D).
             kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
             totals["true_kl"] += kl_raw.mean(dim=0).sum().item()
             n_batches += 1
@@ -136,10 +137,16 @@ def train_vae(
     # the [NULL_ANS] special token added by create_tokenizer.
     vocab_size = len(tokenizer)
 
-    # Initialize embeddings at a scale comparable to sinusoidal PE (~0.7 std) so
-    # that token identity is not drowned out by positional encoding at the input.
-    pretrained_emb = torch.randn(vocab_size, config.vae_arch.embed_dim) * 0.5
-    pretrained_emb = pretrained_emb.to(device)
+    # Load real pretrained embeddings from the encoder model (e.g. BERT).
+    # Random init forces the VAE to relearn the vocabulary subspace from
+    # scratch and is a major cause of poor reconstruction.
+    from src.utils.pretrained_embeddings import load_pretrained_token_embeddings
+
+    pretrained_emb = load_pretrained_token_embeddings(
+        model_name=config.encoder.model_name,
+        target_vocab_size=vocab_size,
+        target_embed_dim=config.vae_arch.embed_dim,
+    ).to(device)
 
     vae = SequenceVAE(config.vae_arch, pretrained_embeddings=pretrained_emb).to(device)
 
@@ -238,12 +245,26 @@ def train_vae(
                     warmup_steps=tc.beta_warmup_steps,
                 )
 
+            # Decoder noise augmentation: with probability noise_aug_prob,
+            # perturb z by extra Gaussian noise inside vae.forward. Trains
+            # the decoder to tolerate the slightly-imperfect latents that
+            # diffusion sampling will produce at inference time.
+            if tc.noise_aug_sigma > 0.0 and tc.noise_aug_prob > 0.0:
+                aug_sigma = (
+                    tc.noise_aug_sigma
+                    if torch.rand(1).item() < tc.noise_aug_prob
+                    else 0.0
+                )
+            else:
+                aug_sigma = 0.0
+
             logits, z, mu, log_var, loss_dict = vae(
                 answer_ids,
                 answer_mask,
                 beta=beta,
                 free_bits=tc.free_bits,
                 target_kl=tc.target_kl,
+                noise_aug_sigma=aug_sigma,
             )
             loss = loss_dict["total"] / tc.grad_accum_steps
             loss.backward()
@@ -258,14 +279,17 @@ def train_vae(
 
             # Accumulate train metrics for epoch average
             with torch.no_grad():
-                # mu, log_var, z are now pooled: (B, D) — no padding positions
-                # to worry about (Bug 7 fixed by architectural change).
-                std = torch.exp(0.5 * log_var)  # (B, D)
-                active_dims = (
-                    int((mu.var(dim=0) > 0.01).sum().item()) if mu.shape[0] > 1 else 0
-                )
-                kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, D)
-                kl_per_dim_mean = kl_per_dim.mean(dim=0)  # (D,)
+                # mu, log_var, z are sequence-shaped: (B, K, D). Active dims
+                # and KL stats are computed over the flattened (K, D) feature
+                # axis so each "dim" is one (k, d) coordinate.
+                std = torch.exp(0.5 * log_var)  # (B, K, D)
+                if mu.shape[0] > 1:
+                    mu_flat = mu.reshape(mu.size(0), -1)  # (B, K*D)
+                    active_dims = int((mu_flat.var(dim=0) > 0.01).sum().item())
+                else:
+                    active_dims = 0
+                kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, K, D)
+                kl_per_dim_mean = kl_per_dim.mean(dim=0).reshape(-1)  # (K*D,)
                 # True KL (no free bits) — exposes posterior collapse
                 true_kl = kl_per_dim_mean.sum().item()
 

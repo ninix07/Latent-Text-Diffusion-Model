@@ -61,9 +61,12 @@ class VAETrainingConfig:
         20.0  # KL ceiling — clamp KL contribution at this value (None = disabled)
     )
     beta_cycle_ratio: float = 0.5  # Fraction of cycle spent ramping
-    free_bits: float = 0.1  # Min KL per latent dim (free bits)
+    free_bits: float = 0.01  # Min KL per latent dim (free bits)
     ema_decay: float = 0.999  # EMA decay rate for validation weights
     val_every_n_steps: int = 500  # Validation frequency (steps)
+    noise_aug_sigma: float = 0.0  # Extra Gaussian noise std added to z before
+    # decode (decoder noise robustness for diffusion-time latents)
+    noise_aug_prob: float = 0.0  # Per-step probability of applying noise aug
 
 
 @dataclass(frozen=True)
@@ -75,6 +78,8 @@ class QualityGateConfig:
     min_active_dims: int = 10  # Minimum active latent dimensions
     min_centroid_distance: float = 0.5  # Min L2 distance between ans/no-ans centroids
     active_dim_variance_threshold: float = 0.1  # Variance threshold for "active" dim
+    max_dead_slots: int = 0  # Max collapsed latent slots (per-slot zero active dims)
+    min_active_in_any_slot: int = 1  # Min active dims required in the weakest slot
 
 
 @dataclass(frozen=True)
