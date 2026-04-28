@@ -176,6 +176,7 @@ class VAEDecoder(nn.Module):
         strategy: str = "greedy",
         temperature: float = 1.0,
         top_p: float = 0.9,
+        eos_token_id: int | None = None,
     ) -> torch.Tensor:
         """Autoregressively generate token ids from latent *z*.
 
@@ -187,6 +188,9 @@ class VAEDecoder(nn.Module):
         strategy   : ``"greedy"`` or ``"nucleus"``.
         temperature: softmax temperature (nucleus only).
         top_p      : nucleus probability mass (nucleus only).
+        eos_token_id: optional token id that terminates generation early. Once
+            every batch element has emitted this id, the loop exits. Positions
+            after the first emission are filled with the eos id.
 
         Returns
         -------
@@ -203,6 +207,7 @@ class VAEDecoder(nn.Module):
         dec_input = start + self.pe[:, :1, :]  # (B, 1, D)
 
         generated: list[torch.Tensor] = []
+        finished = torch.zeros(B, dtype=torch.bool, device=device)
 
         for step in range(max_len):
             L_so_far = step + 1
@@ -226,7 +231,23 @@ class VAEDecoder(nn.Module):
                 sampled = torch.multinomial(sorted_probs, 1).squeeze(-1)
                 next_id = sorted_idx.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
 
+            if eos_token_id is not None:
+                next_id = torch.where(
+                    finished, torch.full_like(next_id, eos_token_id), next_id
+                )
+                finished = finished | (next_id == eos_token_id)
+
             generated.append(next_id)
+
+            if eos_token_id is not None and bool(finished.all().item()):
+                # Pad the remaining positions with eos so the output stays (B, max_len).
+                remaining = max_len - (step + 1)
+                if remaining > 0:
+                    pad = torch.full(
+                        (B,), eos_token_id, dtype=next_id.dtype, device=device
+                    )
+                    generated.extend([pad] * remaining)
+                break
 
             # Embed and append for next step
             next_emb = self.token_embedding(next_id).unsqueeze(1)  # (B, 1, D)

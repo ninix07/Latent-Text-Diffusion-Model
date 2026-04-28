@@ -67,7 +67,7 @@ def evaluate(
         num_layers=config.denoiser_arch.num_layers,
         num_heads=config.denoiser_arch.num_heads,
         ff_dim=config.denoiser_arch.ff_dim,
-        max_seq_len=config.vae_arch.max_answer_len + 1,
+        max_seq_len=config.vae_arch.num_latent_tokens,
         dropout=config.denoiser_arch.dropout,
     )
     # Checkpoint was saved with combined = ModuleList([denoiser, projection]),
