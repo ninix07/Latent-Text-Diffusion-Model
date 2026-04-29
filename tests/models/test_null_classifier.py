@@ -26,13 +26,13 @@ def z0() -> torch.Tensor:
 
 
 # ------------------------------------------------------------------
-def test_output_range(classifier: NullClassifier, z0: torch.Tensor) -> None:
-    """All output values must lie in [0, 1]."""
+def test_predict_proba_range(classifier: NullClassifier, z0: torch.Tensor) -> None:
+    """predict_proba() output values must lie in [0, 1]."""
     classifier.eval()
     with torch.no_grad():
-        probs = classifier(z0)
+        probs = classifier.predict_proba(z0)
     assert (probs >= 0.0).all() and (probs <= 1.0).all(), (
-        f"Output values out of [0,1]: min={probs.min().item():.4f}, "
+        f"Probabilities out of [0,1]: min={probs.min().item():.4f}, "
         f"max={probs.max().item():.4f}"
     )
 
@@ -41,8 +41,8 @@ def test_output_shape(classifier: NullClassifier, z0: torch.Tensor) -> None:
     """forward() must return shape (B,)."""
     classifier.eval()
     with torch.no_grad():
-        probs = classifier(z0)
-    assert probs.shape == (B,), f"Expected shape ({B},), got {probs.shape}"
+        logits = classifier(z0)
+    assert logits.shape == (B,), f"Expected shape ({B},), got {logits.shape}"
 
 
 def test_trainable(classifier: NullClassifier, z0: torch.Tensor) -> None:
@@ -53,9 +53,9 @@ def test_trainable(classifier: NullClassifier, z0: torch.Tensor) -> None:
     # Capture parameter values before update
     params_before = [p.clone().detach() for p in classifier.parameters()]
 
-    probs = classifier(z0)
+    logits = classifier(z0)
     target = torch.ones(B)
-    loss = torch.nn.functional.binary_cross_entropy(probs, target)
+    loss = torch.nn.functional.binary_cross_entropy_with_logits(logits, target)
     loss.backward()
     optimizer.step()
 

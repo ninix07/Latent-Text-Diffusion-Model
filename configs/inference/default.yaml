@@ -3,8 +3,7 @@ inference:
   num_inference_steps: 50            # DDIM sampling steps (subset of T)
   guidance_scale: 3.0                # CFG guidance weight (w)
   eta: 0.0                           # DDIM stochasticity (0=deterministic, 1=DDPM)
-  beam_width: 5                      # Beam search width for VAE decoding
   best_of_n: 1                       # Samples for best-of-N selection
-  decoding_strategy: "beam_search"   # "greedy", "beam_search", or "nucleus"
+  decoding_strategy: "greedy"        # "greedy" or "nucleus"
   nucleus_top_p: 0.9                 # Top-p threshold for nucleus sampling
   nucleus_temperature: 1.0           # Temperature for nucleus sampling

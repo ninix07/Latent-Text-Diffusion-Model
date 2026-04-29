@@ -216,6 +216,10 @@ def train_vae(
             "z_mean": 0.0,
             "z_std": 0.0,
             "active_dims": 0.0,
+            "n_dead_slots": 0.0,
+            "min_active_per_slot": 0.0,
+            "kl_per_slot_max": 0.0,
+            "kl_per_slot_min": 0.0,
             "kl_per_dim_max": 0.0,
             "kl_per_dim_min": 0.0,
             "kl_per_dim_std": 0.0,
@@ -285,13 +289,28 @@ def train_vae(
                 std = torch.exp(0.5 * log_var)  # (B, K, D)
                 if mu.shape[0] > 1:
                     mu_flat = mu.reshape(mu.size(0), -1)  # (B, K*D)
-                    active_dims = int((mu_flat.var(dim=0) > 0.01).sum().item())
+                    var_flat = mu_flat.var(dim=0)  # (K*D,)
+                    active_dims = int((var_flat > 0.01).sum().item())
+                    # Per-slot active dims: catches single-slot collapse where
+                    # some queries die while others stay alive (invisible to
+                    # the flattened K*D count above).
+                    var_per_slot = mu.var(dim=0)  # (K, D)
+                    active_per_slot = (var_per_slot > 0.01).sum(dim=-1)  # (K,)
+                    n_dead_slots = int((active_per_slot == 0).sum().item())
+                    min_active_per_slot = int(active_per_slot.min().item())
                 else:
                     active_dims = 0
+                    n_dead_slots = 0
+                    min_active_per_slot = 0
                 kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, K, D)
-                kl_per_dim_mean = kl_per_dim.mean(dim=0).reshape(-1)  # (K*D,)
+                kl_per_dim_mean = kl_per_dim.mean(dim=0)  # (K, D)
+                kl_per_dim_flat = kl_per_dim_mean.reshape(-1)  # (K*D,)
                 # True KL (no free bits) — exposes posterior collapse
-                true_kl = kl_per_dim_mean.sum().item()
+                true_kl = kl_per_dim_flat.sum().item()
+                # Per-slot KL: helps diagnose which slots are carrying signal
+                kl_per_slot = kl_per_dim_mean.sum(dim=-1)  # (K,)
+                kl_per_slot_max = float(kl_per_slot.max().item())
+                kl_per_slot_min = float(kl_per_slot.min().item())
 
             step_metrics = {
                 "loss": loss_dict["total"].item(),
@@ -306,9 +325,13 @@ def train_vae(
                 "z_mean": z.mean().item(),
                 "z_std": z.std().item(),
                 "active_dims": active_dims,
-                "kl_per_dim_max": kl_per_dim_mean.max().item(),
-                "kl_per_dim_min": kl_per_dim_mean.min().item(),
-                "kl_per_dim_std": kl_per_dim_mean.std().item(),
+                "n_dead_slots": n_dead_slots,
+                "min_active_per_slot": min_active_per_slot,
+                "kl_per_slot_max": kl_per_slot_max,
+                "kl_per_slot_min": kl_per_slot_min,
+                "kl_per_dim_max": kl_per_dim_flat.max().item(),
+                "kl_per_dim_min": kl_per_dim_flat.min().item(),
+                "kl_per_dim_std": kl_per_dim_flat.std().item(),
             }
 
             for k, v in step_metrics.items():
@@ -331,6 +354,10 @@ def train_vae(
                     "latent/z_mean": step_metrics["z_mean"],
                     "latent/z_std": step_metrics["z_std"],
                     "latent/active_dims": step_metrics["active_dims"],
+                    "latent/n_dead_slots": step_metrics["n_dead_slots"],
+                    "latent/min_active_per_slot": step_metrics["min_active_per_slot"],
+                    "latent/kl_per_slot_max": step_metrics["kl_per_slot_max"],
+                    "latent/kl_per_slot_min": step_metrics["kl_per_slot_min"],
                     "latent/kl_per_dim_max": step_metrics["kl_per_dim_max"],
                     "latent/kl_per_dim_min": step_metrics["kl_per_dim_min"],
                     "latent/kl_per_dim_std": step_metrics["kl_per_dim_std"],
