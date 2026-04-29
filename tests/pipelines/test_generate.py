@@ -70,6 +70,12 @@ class _MockSampler:
 
 class _MockNullClassifier(torch.nn.Module):
     def forward(self, z):
+        # Returns "logits" (will be passed through sigmoid by predict_proba).
+        return torch.zeros(z.size(0))
+
+    def predict_proba(self, z):
+        # The pipeline calls predict_proba directly; return ~0.9 confidence
+        # so generated samples are treated as answerable.
         return torch.ones(z.size(0)) * 0.9
 
 

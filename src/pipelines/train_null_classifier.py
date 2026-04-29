@@ -51,7 +51,7 @@ def _evaluate(
             else:
                 z = batch["z_normalized"].to(device)
                 labels = batch["is_answerable"].to(device).float()
-            probs = model(z)
+            probs = model.predict_proba(z)
             all_probs.append(probs.cpu())
             all_labels.append(labels.cpu())
 
@@ -169,8 +169,8 @@ def train_null_classifier(
                 z = batch["z_normalized"].to(device)
                 labels = batch["is_answerable"].to(device).float()
 
-            probs = model(z)
-            loss = F.binary_cross_entropy(probs, labels)
+            logits = model(z)
+            loss = F.binary_cross_entropy_with_logits(logits, labels)
 
             optimizer.zero_grad()
             loss.backward()

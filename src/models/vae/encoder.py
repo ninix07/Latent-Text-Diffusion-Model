@@ -80,7 +80,13 @@ class VAEEncoder(nn.Module):
         self.cross_attn_norm_kv = nn.LayerNorm(embed_dim)
 
         # --- Projection to latent space (per-token) ---
+        # NOTE: a nonlinearity + LayerNorm sits between the projection and the
+        # μ / log_var heads. Without it, ``proj`` followed by ``mu_head`` would
+        # collapse mathematically to a single linear map (and likewise for
+        # log_var), wasting parameters and limiting expressiveness.
         self.proj = nn.Linear(embed_dim, latent_dim)
+        self.proj_act = nn.GELU()
+        self.proj_norm = nn.LayerNorm(latent_dim)
         self.mu_head = nn.Linear(latent_dim, latent_dim)
         self.logvar_head = nn.Linear(latent_dim, latent_dim)
 
@@ -140,6 +146,7 @@ class VAEEncoder(nn.Module):
         pooled = queries + pooled  # (B, K, D)
 
         h = self.proj(pooled)  # (B, K, latent_dim)
+        h = self.proj_norm(self.proj_act(h))  # GELU + LayerNorm
         mu = self.mu_head(h)
         log_var = self.logvar_head(h).clamp(-6.0, 4.0)
         return mu, log_var

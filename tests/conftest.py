@@ -81,7 +81,7 @@ def tiny_config() -> Config:
             checkpoint_every_n_steps=50,
         ),
         null_classifier=NullClassifierConfig(hidden_dim=32, epochs=2, batch_size=4),
-        inference=InferenceConfig(num_inference_steps=5, beam_width=2, best_of_n=1),
+        inference=InferenceConfig(num_inference_steps=5, best_of_n=1),
     )
 
 

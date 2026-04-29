@@ -139,9 +139,8 @@ class InferenceConfig:
     num_inference_steps: int = 50  # DDIM sampling steps
     guidance_scale: float = 3.0  # Classifier-free guidance weight
     eta: float = 0.0  # DDIM stochasticity (0=deterministic)
-    beam_width: int = 5  # Beam search width for VAE decoding
     best_of_n: int = 1  # Number of samples for best-of-N
-    decoding_strategy: str = "beam_search"  # "greedy", "beam_search", or "nucleus"
+    decoding_strategy: str = "greedy"  # "greedy" or "nucleus"
     nucleus_top_p: float = 0.9  # Top-p for nucleus sampling
     nucleus_temperature: float = 1.0  # Temperature for nucleus sampling
 

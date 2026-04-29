@@ -82,22 +82,23 @@ class GenerationPipeline:
                 return self.sampler.ddim.sample(denoiser_fn, z_shape, device)
 
             z0_norm, confidence = best_of_n_sample(
-                _generate_z0_norm, n_samples, self.null_classifier
+                _generate_z0_norm, n_samples, self.null_classifier.predict_proba
             )
         else:
             z0_norm = self.sampler.ddim.sample(denoiser_fn, z_shape, device)
-            confidence = self.null_classifier(z0_norm)  # (B,)
+            confidence = self.null_classifier.predict_proba(z0_norm)  # (B,)
         z0 = z0_norm * std + mean
         threshold = self.config.null_classifier.threshold
         is_answerable = (confidence >= threshold).tolist()
         confidence_vals = confidence.tolist()
 
-        # 4. VAE decode → token IDs (autoregressive from pooled latent)
+        # 4. VAE decode → token IDs (autoregressive from latent)
         strategy = self.config.inference.decoding_strategy
-        # Beam search requires autoregressive specialisation not yet
-        # implemented; fall back to greedy in that case.
-        if strategy == "beam_search":
-            strategy = "greedy"
+        if strategy not in ("greedy", "nucleus"):
+            raise ValueError(
+                f"Unsupported decoding_strategy={strategy!r}. "
+                f"Supported strategies are 'greedy' and 'nucleus'."
+            )
         sep_id = getattr(self.tokenizer, "sep_token_id", None)
         eos_token_id = sep_id if isinstance(sep_id, int) else None
         token_ids = self.vae.decode_to_tokens(
