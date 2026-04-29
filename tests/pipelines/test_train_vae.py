@@ -60,13 +60,25 @@ def _make_tiny_vae(config: Config) -> nn.Module:
     return SequenceVAE(config.vae_arch, pretrained_embeddings=pretrained_emb)
 
 
+def _patch_pretrained_loader(monkeypatch) -> None:
+    """Bypass the real BERT embedding loader so tiny test configs don't trip
+    the embed_dim sanity check (BERT is 768-d; tests use 64-d)."""
+    import src.utils.pretrained_embeddings as pe_mod
+
+    def _fake_loader(model_name, target_vocab_size, target_embed_dim):
+        return torch.randn(target_vocab_size, target_embed_dim) * 0.02
+
+    monkeypatch.setattr(pe_mod, "load_pretrained_token_embeddings", _fake_loader)
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 
-def test_one_epoch_runs(tiny_config: Config):
+def test_one_epoch_runs(tiny_config: Config, monkeypatch):
     """Training for 2 steps should complete without raising."""
+    _patch_pretrained_loader(monkeypatch)
     tc = tiny_config.vae_training
     from dataclasses import replace as _replace
 
@@ -100,8 +112,9 @@ def test_one_epoch_runs(tiny_config: Config):
     assert isinstance(metrics, dict), "train_vae should return a dict"
 
 
-def test_loss_decreases(tiny_config: Config):
+def test_loss_decreases(tiny_config: Config, monkeypatch):
     """Training for 20 steps on the same batch should reduce loss."""
+    _patch_pretrained_loader(monkeypatch)
     from dataclasses import replace as _replace
 
     new_tc = _replace(

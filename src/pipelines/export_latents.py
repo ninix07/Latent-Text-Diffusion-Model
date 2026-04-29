@@ -58,10 +58,11 @@ def export_latents(
     tokenizer = create_tokenizer(saved_cfg.encoder.model_name)
     vocab_size = len(tokenizer)
 
-    pretrained_emb = torch.randn(vocab_size, saved_cfg.vae_arch.embed_dim) * 0.5
-    pretrained_emb = pretrained_emb.to(device)
+    # Placeholder embedding tensor — load_state_dict below overwrites it with
+    # the trained embeddings from the checkpoint.
+    placeholder_emb = torch.zeros(vocab_size, saved_cfg.vae_arch.embed_dim, device=device)
 
-    vae = SequenceVAE(saved_cfg.vae_arch, pretrained_embeddings=pretrained_emb).to(
+    vae = SequenceVAE(saved_cfg.vae_arch, pretrained_embeddings=placeholder_emb).to(
         device
     )
     vae.load_state_dict(ckpt["model_state_dict"])
@@ -109,11 +110,12 @@ def export_latents(
     val_data = _encode_split(val_loader)
 
     # ------------------------------------------------------------------ normalisation stats
-    # Computed from train split only: mean/std per latent dim
-    # latents shape: (N, D) — pooled per sentence
+    # Computed from train split only: per-(K, D) mean/std so each latent
+    # slot gets its own scale (analogous to SD's per-channel scaling).
+    # latents shape: (N, K, D) — sequence of latent vectors per sentence
     train_latents = train_data["latents_raw"]
-    norm_mean = train_latents.mean(dim=0)  # (D,)
-    norm_std = train_latents.std(dim=0).clamp(min=1e-6)  # (D,)
+    norm_mean = train_latents.mean(dim=0)  # (K, D)
+    norm_std = train_latents.std(dim=0).clamp(min=1e-6)  # (K, D)
     norm_stats = {"mean": norm_mean, "std": norm_std}
 
     # Apply normalisation and rename key to match LatentDataset expectation

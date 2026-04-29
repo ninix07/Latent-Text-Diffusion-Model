@@ -107,15 +107,22 @@ class SQuADDataset(Dataset):
             answer_text = NULL_TOKEN
             is_answerable = False
 
-        # Answers do not need [CLS]/[SEP] — the VAE encoder/decoder are not BERT
-        # and these boundary tokens waste two latent positions on a constant signal
-        # that is stripped by skip_special_tokens=True at generation time anyway.
+        # Skip [CLS] (constant prefix wastes a position), but DO append [SEP] as
+        # an end-of-sequence marker so the decoder learns where to stop. Without
+        # it the autoregressive decoder always emits max_answer_len tokens and
+        # trailing junk pollutes EM/F1.
         answer_ids, answer_mask = _tokenize_and_pad(
             self.tokenizer,
             answer_text,
             self.max_answer_len,
             add_special_tokens=False,
         )
+        sep_id = self.tokenizer.sep_token_id
+        if isinstance(sep_id, int):
+            real_len = int(answer_mask.sum().item())
+            if real_len < self.max_answer_len:
+                answer_ids[real_len] = int(sep_id)
+                answer_mask[real_len] = 1
 
         return {
             "context_ids": context_ids,

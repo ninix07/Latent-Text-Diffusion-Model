@@ -17,7 +17,7 @@ class LatentDataset(Dataset):
     """PyTorch Dataset that wraps a precomputed latent .pt file.
 
     The file is expected to contain a list of dicts, each with:
-        - ``z_normalized``   : ``(max_answer_len, latent_dim)``
+        - ``z_normalized``   : ``(num_latent_tokens, latent_dim)``
         - ``context_ids``    : ``(max_context_len,)``
         - ``context_mask``   : ``(max_context_len,)``
         - ``question_ids``   : ``(max_question_len,)``

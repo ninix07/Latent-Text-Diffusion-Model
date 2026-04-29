@@ -25,10 +25,10 @@ def compute_vae_loss(
     logits : (B, L, V)
     target_ids : (B, L)
     mask : (B, L) — 1 for real tokens, 0 for padding.
-    mu, log_var : (B, latent_dim)  — pooled latent parameters.
+    mu, log_var : (B, K, latent_dim) — sequence of latent parameters.
     beta : float
     free_bits : float
-        Minimum KL per latent dimension (prevents full posterior collapse).
+        Minimum KL per (K, D) position (prevents full posterior collapse).
     target_kl : float or None
         KL ceiling.  The KL contribution to the loss is clamped to this
         value, so gradients stop flowing once KL exceeds the target.
@@ -47,11 +47,11 @@ def compute_vae_loss(
     ce = F.cross_entropy(logits_flat, target_flat, reduction="none")
     recon = (ce * mask_flat).sum() / mask_flat.sum().clamp(min=1)
 
-    # KL: pooled latent is (B, D) — no sequence dimension to mask.
-    # Clamp per-sample per-dim BEFORE averaging over the batch so that
-    # individual samples cannot collapse a dimension while the batch mean
-    # stays above the free-bits floor (Kingma et al. 2016 free bits).
-    kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, D)
+    # KL: latent is (B, K, D). Clamp per-sample per-(K,D) BEFORE averaging
+    # over the batch so individual samples cannot collapse a dimension
+    # while the batch mean stays above the free-bits floor (Kingma 2016).
+    # mean(dim=0) → (K, D); .sum() then collapses K and D into one scalar.
+    kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, K, D)
     if free_bits > 0.0:
         kl = kl_raw.clamp(min=free_bits).mean(dim=0).sum()
     else:
