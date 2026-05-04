@@ -27,6 +27,7 @@ class FrozenEncoder(nn.Module):
         super().__init__()
         self.bert = AutoModel.from_pretrained(model_name)
         self._freeze(unfreeze_top_n)
+        self._fully_frozen = all(not p.requires_grad for p in self.bert.parameters())
 
     # ------------------------------------------------------------------
     # Public API
@@ -51,7 +52,9 @@ class FrozenEncoder(nn.Module):
         Tensor
             Last hidden state of shape ``(B, seq_len, hidden_dim)``.
         """
-        with torch.no_grad():
+        # Only block gradients if every BERT param is frozen — otherwise the
+        # `unfreeze_top_n` setting is silently a no-op.
+        with torch.set_grad_enabled(not self._fully_frozen):
             outputs = self.bert(
                 input_ids=input_ids,
                 attention_mask=attention_mask,

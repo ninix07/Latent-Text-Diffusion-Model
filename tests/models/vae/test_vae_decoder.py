@@ -33,7 +33,7 @@ def decoder():
 @pytest.fixture
 def sample_inputs():
     token_ids = torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, MAX_ANSWER_LEN))
-    z = torch.randn(BATCH_SIZE, LATENT_DIM)
+    z = torch.randn(BATCH_SIZE, NUM_LATENT_TOKENS, LATENT_DIM)
     mask = torch.ones(BATCH_SIZE, MAX_ANSWER_LEN, dtype=torch.long)
     return token_ids, z, mask
 

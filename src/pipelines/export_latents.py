@@ -74,8 +74,9 @@ def _export_latents_sequence_vae(
     tokenizer = create_tokenizer(saved_cfg.encoder.model_name)
     vocab_size = len(tokenizer)
 
-    pretrained_emb = torch.randn(vocab_size, saved_cfg.vae_arch.embed_dim) * 0.5
-    pretrained_emb = pretrained_emb.to(device)
+    # Placeholder embedding tensor — load_state_dict below overwrites it with
+    # the trained embeddings from the checkpoint.
+    placeholder_emb = torch.zeros(vocab_size, saved_cfg.vae_arch.embed_dim, device=device)
 
     vae = SequenceVAE(saved_cfg.vae_arch, pretrained_embeddings=pretrained_emb).to(device)
     vae.load_state_dict(ckpt["model_state_dict"])

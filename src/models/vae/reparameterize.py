@@ -31,11 +31,10 @@ def kl_divergence(
 
     Parameters
     ----------
-    mu, log_var : Tensor (B, D) — pooled latent parameters.
+    mu, log_var : Tensor (B, ...D) — latent parameters with arbitrary
+        non-batch shape (e.g. (B, D) for pooled, (B, K, D) for sequence).
     mask : Tensor, optional
-        Ignored (kept for backward compatibility).  Masking is no longer
-        needed because the encoder pools over real positions before
-        producing mu/log_var.
+        Ignored (kept for backward compatibility).
     """
-    kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, D)
+    kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())
     return kl_per_dim.mean(dim=0).sum()

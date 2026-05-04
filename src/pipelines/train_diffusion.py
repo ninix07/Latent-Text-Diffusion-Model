@@ -170,7 +170,7 @@ def train_diffusion(
         num_layers=cfg_arch.num_layers,
         num_heads=cfg_arch.num_heads,
         ff_dim=cfg_arch.ff_dim,
-        max_seq_len=cfg_vae.max_answer_len + 1,
+        max_seq_len=cfg_vae.num_latent_tokens,
         dropout=cfg_arch.dropout,
     ).to(device)
 

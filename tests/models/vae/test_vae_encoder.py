@@ -14,6 +14,7 @@ DROPOUT = 0.0
 MAX_ANSWER_LEN = 10
 VOCAB_SIZE = 100
 BATCH_SIZE = 4
+NUM_LATENT_TOKENS = 4
 
 
 @pytest.fixture
@@ -30,6 +31,7 @@ def encoder(pretrained_emb):
         num_heads=NUM_HEADS,
         dropout=DROPOUT,
         max_answer_len=MAX_ANSWER_LEN,
+        num_latent_tokens=NUM_LATENT_TOKENS,
         pretrained_embeddings=pretrained_emb,
     )
 
@@ -44,16 +46,16 @@ def sample_batch():
 def test_output_shapes(encoder, sample_batch):
     ids, mask = sample_batch
     mu, log_var = encoder(ids, mask)
-    assert mu.shape == (BATCH_SIZE, LATENT_DIM)
-    assert log_var.shape == (BATCH_SIZE, LATENT_DIM)
+    assert mu.shape == (BATCH_SIZE, NUM_LATENT_TOKENS, LATENT_DIM)
+    assert log_var.shape == (BATCH_SIZE, NUM_LATENT_TOKENS, LATENT_DIM)
 
 
-def test_pooled_output(encoder, sample_batch):
-    """Encoder produces a single pooled vector per sample, not per-position."""
+def test_sequence_latent_output(encoder, sample_batch):
+    """Encoder produces a sequence of K latent vectors per sample."""
     ids, mask = sample_batch
     mu, log_var = encoder(ids, mask)
-    assert mu.dim() == 2
-    assert log_var.dim() == 2
+    assert mu.dim() == 3
+    assert log_var.dim() == 3
 
 
 def test_pretrained_embed_init(pretrained_emb):
@@ -64,6 +66,7 @@ def test_pretrained_embed_init(pretrained_emb):
         num_heads=NUM_HEADS,
         dropout=DROPOUT,
         max_answer_len=MAX_ANSWER_LEN,
+        num_latent_tokens=NUM_LATENT_TOKENS,
         pretrained_embeddings=pretrained_emb,
     )
     assert torch.allclose(enc.embedding.weight, pretrained_emb)

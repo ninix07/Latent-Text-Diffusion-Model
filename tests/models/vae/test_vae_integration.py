@@ -52,9 +52,9 @@ def test_full_forward(vae, sample_batch):
     logits, z, mu, log_var, loss_dict = vae(ids, mask, beta=0.5)
 
     assert logits.shape == (BATCH_SIZE, MAX_ANSWER_LEN, VOCAB_SIZE)
-    assert z.shape == (BATCH_SIZE, LATENT_DIM)
-    assert mu.shape == (BATCH_SIZE, LATENT_DIM)
-    assert log_var.shape == (BATCH_SIZE, LATENT_DIM)
+    assert z.shape == (BATCH_SIZE, NUM_LATENT_TOKENS, LATENT_DIM)
+    assert mu.shape == (BATCH_SIZE, NUM_LATENT_TOKENS, LATENT_DIM)
+    assert log_var.shape == (BATCH_SIZE, NUM_LATENT_TOKENS, LATENT_DIM)
     assert "total" in loss_dict
     assert "recon" in loss_dict
     assert "kl" in loss_dict

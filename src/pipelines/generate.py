@@ -61,13 +61,16 @@ class GenerationPipeline:
 
         # 2. DDIM sampling (with optional best-of-N)
         B = context_ids.size(0)
+        K = self.config.vae_arch.num_latent_tokens
         D = self.config.vae_arch.latent_dim
-        z_shape = (B, D)
+        z_shape = (B, K, D)
 
         def denoiser_fn(z_t, t_tensor):
             return self.sampler.predict_noise(z_t, t_tensor, conditioning, cond_mask)
 
-        # 3. Denormalize helper
+        # 3. Denormalize helper. Diffusion runs in normalized latent space;
+        # we denormalize only for the VAE decoder. The null classifier was
+        # trained on z_normalized, so it must see normalized latents too.
         mean = self.norm_mean.to(device)
         std = self.norm_std.to(device)
 
@@ -75,17 +78,16 @@ class GenerationPipeline:
         if n_samples > 1:
             from src.models.sampler.best_of_n import best_of_n_sample
 
-            def _generate_z0() -> torch.Tensor:
-                return (
-                    self.sampler.ddim.sample(denoiser_fn, z_shape, device) * std + mean
-                )
+            def _generate_z0_norm() -> torch.Tensor:
+                return self.sampler.ddim.sample(denoiser_fn, z_shape, device)
 
-            z0, confidence = best_of_n_sample(
-                _generate_z0, n_samples, self.null_classifier
+            z0_norm, confidence = best_of_n_sample(
+                _generate_z0_norm, n_samples, self.null_classifier
             )
         else:
-            z0 = self.sampler.ddim.sample(denoiser_fn, z_shape, device) * std + mean
-            confidence = self.null_classifier(z0)  # (B,)
+            z0_norm = self.sampler.ddim.sample(denoiser_fn, z_shape, device)
+            confidence = self.null_classifier(z0_norm)  # (B,)
+        z0 = z0_norm * std + mean
         threshold = self.config.null_classifier.threshold
         is_answerable = (confidence >= threshold).tolist()
         confidence_vals = confidence.tolist()

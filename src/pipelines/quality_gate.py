@@ -47,7 +47,7 @@ def run_quality_gate(
     all_token_correct = 0
     all_token_total = 0
     all_kl: list[torch.Tensor] = []
-    all_mu: list[torch.Tensor] = []  # (B, D) — already pooled
+    all_mu: list[torch.Tensor] = []  # (B, K, D) — sequence latent
     all_answerable: list[torch.Tensor] = []
 
     with torch.no_grad():
@@ -66,32 +66,44 @@ def run_quality_gate(
             all_token_total += total.item()
 
             # --- KL ---
-            # mu, log_var are pooled: (B, D) — no sequence masking needed
-            kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, D)
+            # mu, log_var are sequence-shaped: (B, K, D). mean over batch
+            # then sum over (K, D) gives a single scalar per batch.
+            kl_per_dim = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, K, D)
             kl_batch = kl_per_dim.mean(dim=0).sum()  # scalar
             all_kl.append(kl_batch.cpu())
 
             # --- Collect mu for active dims + centroid distance ---
-            # mu is already (B, D) — no pooling needed
             all_mu.append(mu.cpu())
             all_answerable.append(is_answerable.cpu())
 
     recon_accuracy = all_token_correct / max(all_token_total, 1)
     mean_kl = float(torch.stack(all_kl).mean())
 
-    mu_cat = torch.cat(all_mu, dim=0)  # (N, D)
+    mu_cat = torch.cat(all_mu, dim=0)  # (N, K, D)
+    # Flatten K and D into a single feature axis for active-dim and centroid
+    # statistics. A "dim" here is one (k, d) coordinate of the latent.
+    mu_flat = mu_cat.reshape(mu_cat.size(0), -1)  # (N, K*D)
     ans_cat = torch.cat(all_answerable, dim=0)  # (N,)
 
     # Active dims: variance across samples
-    variances = mu_cat.var(dim=0)  # (D,)
+    variances = mu_flat.var(dim=0)  # (K*D,)
     active_dims = int((variances > qg.active_dim_variance_threshold).sum().item())
+
+    # Per-slot active dims: catches single-slot collapse (some queries die while
+    # others stay alive — invisible to the flattened count above).
+    variances_per_slot = mu_cat.var(dim=0)  # (K, D)
+    active_per_slot = (variances_per_slot > qg.active_dim_variance_threshold).sum(
+        dim=-1
+    )  # (K,)
+    dead_slots = int((active_per_slot == 0).sum().item())
+    min_active_in_any_slot = int(active_per_slot.min().item())
 
     # Centroid distance
     ans_mask = ans_cat.bool()
     unans_mask = ~ans_mask
     if ans_mask.sum() > 0 and unans_mask.sum() > 0:
-        centroid_ans = mu_cat[ans_mask].mean(dim=0)
-        centroid_unans = mu_cat[unans_mask].mean(dim=0)
+        centroid_ans = mu_flat[ans_mask].mean(dim=0)
+        centroid_unans = mu_flat[unans_mask].mean(dim=0)
         centroid_distance = float(torch.norm(centroid_ans - centroid_unans).item())
     else:
         centroid_distance = 0.0
@@ -111,6 +123,16 @@ def run_quality_gate(
             "value": active_dims,
             "passed": active_dims >= qg.min_active_dims,
             "threshold": qg.min_active_dims,
+        },
+        "dead_slots": {
+            "value": dead_slots,
+            "passed": dead_slots <= qg.max_dead_slots,
+            "threshold": qg.max_dead_slots,
+        },
+        "min_active_in_any_slot": {
+            "value": min_active_in_any_slot,
+            "passed": min_active_in_any_slot >= qg.min_active_in_any_slot,
+            "threshold": qg.min_active_in_any_slot,
         },
         "centroid_distance": {
             "value": centroid_distance,

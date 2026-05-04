@@ -11,9 +11,9 @@ from src.models.positional import sinusoidal_encoding as _sinusoidal_encoding
 class VAEDecoder(nn.Module):
     """Causal transformer decoder with latent prefix (KV cache injection).
 
-    The pooled latent *z* is projected into ``num_latent_tokens`` pseudo-tokens
-    that are **prepended** to the decoder sequence.  A custom attention mask
-    ensures:
+    The latent *z* is a sequence of ``num_latent_tokens`` vectors that are
+    each projected into ``embed_dim`` and **prepended** to the decoder
+    sequence.  A custom attention mask ensures:
 
     * All positions can attend to the latent prefix tokens.
     * Decoder token positions obey causal (autoregressive) ordering.
@@ -55,8 +55,10 @@ class VAEDecoder(nn.Module):
         pe = _sinusoidal_encoding(max_answer_len, embed_dim)
         self.register_buffer("pe", pe.unsqueeze(0))  # (1, L, D)
 
-        # Project pooled latent z → K prefix tokens for KV injection
-        self.latent_proj = nn.Linear(latent_dim, num_latent_tokens * embed_dim)
+        # Project per-position latent (latent_dim → embed_dim). The K dimension
+        # of z already matches num_latent_tokens — the encoder produces
+        # exactly one latent vector per prefix slot.
+        self.latent_proj = nn.Linear(latent_dim, embed_dim)
 
         # Transformer encoder used with a custom causal+prefix mask so that
         # the architecture is effectively a causal decoder with KV injection.
@@ -96,9 +98,13 @@ class VAEDecoder(nn.Module):
         return mask
 
     def _project_latent(self, z: torch.Tensor) -> torch.Tensor:
-        """``(B, latent_dim)`` → ``(B, K, embed_dim)``."""
-        B = z.size(0)
-        return self.latent_proj(z).view(B, self.num_latent_tokens, self.embed_dim)
+        """``(B, K, latent_dim)`` → ``(B, K, embed_dim)``."""
+        if z.dim() != 3 or z.size(1) != self.num_latent_tokens:
+            raise ValueError(
+                f"Decoder expects z of shape (B, {self.num_latent_tokens}, latent_dim); "
+                f"got {tuple(z.shape)}"
+            )
+        return self.latent_proj(z)
 
     # ------------------------------------------------------------------
     # Forward (teacher-forced training)
@@ -115,7 +121,7 @@ class VAEDecoder(nn.Module):
         Parameters
         ----------
         token_ids : Tensor (B, L) — target answer tokens.
-        z         : Tensor (B, latent_dim) — pooled latent.
+        z         : Tensor (B, K, latent_dim) — sequence of latent vectors.
         mask      : Tensor (B, L) — 1 for real tokens, 0 for padding.
 
         Returns
@@ -170,17 +176,21 @@ class VAEDecoder(nn.Module):
         strategy: str = "greedy",
         temperature: float = 1.0,
         top_p: float = 0.9,
+        eos_token_id: int | None = None,
     ) -> torch.Tensor:
         """Autoregressively generate token ids from latent *z*.
 
         Parameters
         ----------
-        z          : (B, latent_dim) — pooled latent.
+        z          : (B, K, latent_dim) — sequence of latent vectors.
         max_len    : int — maximum tokens to generate.
         output_head: OutputProjection module (hidden → logits).
         strategy   : ``"greedy"`` or ``"nucleus"``.
         temperature: softmax temperature (nucleus only).
         top_p      : nucleus probability mass (nucleus only).
+        eos_token_id: optional token id that terminates generation early. Once
+            every batch element has emitted this id, the loop exits. Positions
+            after the first emission are filled with the eos id.
 
         Returns
         -------
@@ -197,6 +207,7 @@ class VAEDecoder(nn.Module):
         dec_input = start + self.pe[:, :1, :]  # (B, 1, D)
 
         generated: list[torch.Tensor] = []
+        finished = torch.zeros(B, dtype=torch.bool, device=device)
 
         for step in range(max_len):
             L_so_far = step + 1
@@ -220,7 +231,23 @@ class VAEDecoder(nn.Module):
                 sampled = torch.multinomial(sorted_probs, 1).squeeze(-1)
                 next_id = sorted_idx.gather(-1, sampled.unsqueeze(-1)).squeeze(-1)
 
+            if eos_token_id is not None:
+                next_id = torch.where(
+                    finished, torch.full_like(next_id, eos_token_id), next_id
+                )
+                finished = finished | (next_id == eos_token_id)
+
             generated.append(next_id)
+
+            if eos_token_id is not None and bool(finished.all().item()):
+                # Pad the remaining positions with eos so the output stays (B, max_len).
+                remaining = max_len - (step + 1)
+                if remaining > 0:
+                    pad = torch.full(
+                        (B,), eos_token_id, dtype=next_id.dtype, device=device
+                    )
+                    generated.extend([pad] * remaining)
+                break
 
             # Embed and append for next step
             next_emb = self.token_embedding(next_id).unsqueeze(1)  # (B, 1, D)

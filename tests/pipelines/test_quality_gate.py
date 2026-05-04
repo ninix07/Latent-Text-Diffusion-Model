@@ -18,17 +18,27 @@ from src.pipelines.quality_gate import run_quality_gate
 # Helpers
 # ---------------------------------------------------------------------------
 
-_EXPECTED_CHECKS = {"recon_accuracy", "mean_kl", "active_dims", "centroid_distance"}
+_EXPECTED_CHECKS = {
+    "recon_accuracy",
+    "mean_kl",
+    "active_dims",
+    "dead_slots",
+    "min_active_in_any_slot",
+    "centroid_distance",
+}
 
 
 def _make_config_with_low_thresholds(tiny_config: Config) -> Config:
     """Return a config whose quality gate thresholds are very easy to pass."""
+    K = tiny_config.vae_arch.num_latent_tokens
     qg = QualityGateConfig(
         min_recon_accuracy=0.0,
         min_mean_kl=0.0,
         min_active_dims=0,
         min_centroid_distance=0.0,
         active_dim_variance_threshold=1e9,  # nothing will be "active" — but threshold is 0
+        max_dead_slots=K,  # untrained model collapses every slot — accept all
+        min_active_in_any_slot=0,
     )
     return _replace(tiny_config, quality_gate=qg)
 

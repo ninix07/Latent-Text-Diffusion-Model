@@ -14,7 +14,7 @@ from src.pipelines.train_diffusion import train_diffusion
 def _make_diffusion_loader(config: Config, n_batches: int = 4) -> DataLoader:
     """Loader with pre-built conditioning (bypasses encoder)."""
     B = config.diffusion_training.batch_size
-    L = config.vae_arch.max_answer_len
+    K = config.vae_arch.num_latent_tokens
     D = config.vae_arch.latent_dim
     cond_len = config.encoder.max_context_len + config.encoder.max_question_len
     cond_dim = config.denoiser_arch.denoiser_dim
@@ -22,7 +22,7 @@ def _make_diffusion_loader(config: Config, n_batches: int = 4) -> DataLoader:
     items = []
     for _ in range(n_batches * B):
         items.append({
-            "z_normalized": torch.randn(L, D),
+            "z_normalized": torch.randn(K, D),
             "context_ids": torch.zeros(config.encoder.max_context_len, dtype=torch.long),
             "context_mask": torch.ones(config.encoder.max_context_len, dtype=torch.long),
             "question_ids": torch.zeros(config.encoder.max_question_len, dtype=torch.long),
