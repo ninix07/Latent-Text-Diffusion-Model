@@ -90,20 +90,28 @@ class GenerationPipeline:
         is_answerable = (confidence >= threshold).tolist()
         confidence_vals = confidence.tolist()
 
-        # 4. VAE decode → token IDs (autoregressive from pooled latent)
-        strategy = self.config.inference.decoding_strategy
-        # Beam search requires autoregressive specialisation not yet
-        # implemented; fall back to greedy in that case.
-        if strategy == "beam_search":
-            strategy = "greedy"
-        token_ids = self.vae.decode_to_tokens(
-            z0,
-            strategy=strategy,
-            temperature=self.config.inference.nucleus_temperature,
-            top_p=self.config.inference.nucleus_top_p,
-        )
+        # 4. VAE decode → answer strings
+        # LangVAEAdapter exposes decode_sentences() and returns text directly.
+        # SequenceVAE exposes decode_to_tokens() and needs detokenization.
+        if hasattr(self.vae, "decode_sentences"):
+            answer_texts = self.vae.decode_sentences(z0)
+        else:
+            strategy = self.config.inference.decoding_strategy
+            # Beam search not yet implemented; fall back to greedy.
+            if strategy == "beam_search":
+                strategy = "greedy"
+            token_ids = self.vae.decode_to_tokens(
+                z0,
+                strategy=strategy,
+                temperature=self.config.inference.nucleus_temperature,
+                top_p=self.config.inference.nucleus_top_p,
+            )
+            answer_texts = [
+                self.tokenizer.decode(token_ids[i].tolist(), skip_special_tokens=True)
+                for i in range(B)
+            ]
 
-        # 5. Detokenize
+        # 5. Package results
         results = []
         for i in range(B):
             ans_bool = (
@@ -116,11 +124,7 @@ class GenerationPipeline:
                 if isinstance(confidence_vals, list)
                 else float(confidence_vals)
             )
-            if ans_bool:
-                ids = token_ids[i].tolist()
-                text = self.tokenizer.decode(ids, skip_special_tokens=True)
-            else:
-                text = ""
+            text = answer_texts[i] if ans_bool else ""
             results.append(
                 {"answer_text": text, "is_answerable": ans_bool, "confidence": conf}
             )

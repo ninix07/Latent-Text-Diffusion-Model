@@ -1,0 +1,11 @@
+langvae:
+  encoder_model: "bert-base-cased"
+  decoder_model: "gpt2"
+  latent_size: 128
+  max_len: 50
+  learning_rate: 0.001
+  batch_size: 50
+  num_epochs: 10
+  max_beta: 1.0
+  kl_threshold: 0.5
+  checkpoint_dir: "checkpoints/langvae"

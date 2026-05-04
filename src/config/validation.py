@@ -60,3 +60,10 @@ def validate_config(config: Config) -> None:
         raise ValueError(
             f"guidance_scale must be >= 0, got {config.inference.guidance_scale}"
         )
+
+    # LangVAE latent_size must match vae_arch.latent_dim so diffusion stays compatible
+    if config.langvae.latent_size != config.vae_arch.latent_dim:
+        raise ValueError(
+            f"langvae.latent_size ({config.langvae.latent_size}) must equal "
+            f"vae_arch.latent_dim ({config.vae_arch.latent_dim})"
+        )
