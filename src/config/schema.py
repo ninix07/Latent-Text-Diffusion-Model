@@ -147,6 +147,22 @@ class InferenceConfig:
 
 
 @dataclass(frozen=True)
+class LangVAEConfig:
+    """LangVAE training and architecture settings."""
+
+    encoder_model: str = "bert-base-cased"       # HF encoder (weights frozen during VAE training)
+    decoder_model: str = "gpt2"                  # HF decoder (weights frozen during VAE training)
+    latent_size: int = 128                        # Must equal vae_arch.latent_dim for diffusion compat
+    max_len: int = 50                             # Max answer token length (decoder tokenizer)
+    learning_rate: float = 1e-3                  # Optimizer LR for bottleneck projection layers
+    batch_size: int = 50                         # Training batch size
+    num_epochs: int = 10                         # Training epochs
+    max_beta: float = 1.0                        # Max KL weight in cyclical schedule
+    kl_threshold: float = 0.5                    # KL threshold for cyclical scheduler
+    checkpoint_dir: str = "checkpoints/langvae"  # Where to save the trained model
+
+
+@dataclass(frozen=True)
 class Config:
     """Top-level configuration combining all sections."""
 
@@ -156,6 +172,7 @@ class Config:
     vae_arch: VAEArchConfig = field(default_factory=VAEArchConfig)
     vae_training: VAETrainingConfig = field(default_factory=VAETrainingConfig)
     quality_gate: QualityGateConfig = field(default_factory=QualityGateConfig)
+    langvae: LangVAEConfig = field(default_factory=LangVAEConfig)
     denoiser_arch: DenoiserArchConfig = field(default_factory=DenoiserArchConfig)
     noise_schedule: NoiseScheduleConfig = field(default_factory=NoiseScheduleConfig)
     diffusion_training: DiffusionTrainingConfig = field(
@@ -189,6 +206,9 @@ class Config:
             ),
             quality_gate=QualityGateConfig(
                 **_checked(QualityGateConfig, d.get("quality_gate", {}))
+            ),
+            langvae=LangVAEConfig(
+                **_checked(LangVAEConfig, d.get("langvae", {}))
             ),
             denoiser_arch=DenoiserArchConfig(
                 **_checked(DenoiserArchConfig, d.get("denoiser_arch", {}))
