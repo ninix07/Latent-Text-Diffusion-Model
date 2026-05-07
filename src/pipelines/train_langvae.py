@@ -87,7 +87,7 @@ def train_langvae(
     from langvae import LangVAE
     from langvae.encoders import SentenceEncoder
     from langvae.decoders import SentenceDecoder
-    from langvae.arch import VAEConfig
+    from pythae.models.vae import VAEConfig
     from langvae.trainers import CyclicalScheduleKLThresholdTrainerConfig
     from langvae.pipelines import LanguageTrainingPipeline
     from transformers import AutoTokenizer
@@ -110,7 +110,7 @@ def train_langvae(
         max_len=lc.max_len,
         device=device,
     )
-    vae_config = VAEConfig(latent_size=lc.latent_size)
+    vae_config = VAEConfig(latent_dim=lc.latent_size)
     model = LangVAE(model_config=vae_config, encoder=encoder, decoder=decoder)
 
     # ------------------------------------------------------------------ datasets
