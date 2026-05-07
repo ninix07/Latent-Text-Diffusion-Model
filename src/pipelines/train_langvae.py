@@ -94,12 +94,30 @@ def train_langvae(
 
     # transformers>=4.36 returns DynamicCache instead of tuple-of-tuples for
     # past_key_values; langvae uses pkv[layer][k_or_v] which requires subscript.
+    # Different transformers versions expose layers differently; handle each.
     try:
         from transformers.cache_utils import DynamicCache
-        if not hasattr(DynamicCache, "__getitem__"):
-            def _dyncache_getitem(self, idx):
+
+        def _dyncache_layer_kv(self, idx):
+            # 4.55+: .layers is list of CacheLayer with .keys / .values
+            if hasattr(self, "layers"):
+                layer = self.layers[idx]
+                if hasattr(layer, "keys") and hasattr(layer, "values"):
+                    k = layer.keys
+                    v = layer.values
+                    k = k() if callable(k) else k
+                    v = v() if callable(v) else v
+                    return (k, v)
+            # 4.36-4.54: separate key_cache / value_cache lists
+            if hasattr(self, "key_cache") and hasattr(self, "value_cache"):
+                return (self.key_cache[idx], self.value_cache[idx])
+            # legacy fallback
+            if hasattr(self, "to_legacy_cache"):
                 return self.to_legacy_cache()[idx]
-            DynamicCache.__getitem__ = _dyncache_getitem
+            raise TypeError("Unsupported DynamicCache layout")
+
+        # Force-override even if transformers added a different __getitem__.
+        DynamicCache.__getitem__ = _dyncache_layer_kv
     except ImportError:
         pass
 
