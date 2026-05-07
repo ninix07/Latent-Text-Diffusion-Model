@@ -38,13 +38,13 @@ class GenerationPipeline:
         context_mask: torch.Tensor,
         question_ids: torch.Tensor,
         question_mask: torch.Tensor,
-    ) -> dict:
-        """Generate an answer for a single example (or batch).
+    ) -> list[dict]:
+        """Generate answers for a batch.
 
         Returns
         -------
-        dict
-            Keys: answer_text (str), is_answerable (bool), confidence (float).
+        list[dict]
+            Each dict has keys: answer_text (str), is_answerable (bool), confidence (float).
         """
         device = next(self.encoder.parameters()).device
         context_ids = context_ids.to(device)
@@ -96,7 +96,11 @@ class GenerationPipeline:
         # LangVAEAdapter exposes decode_sentences() and returns text directly.
         # SequenceVAE exposes decode_to_tokens() and needs detokenization.
         if hasattr(self.vae, "decode_sentences"):
-            answer_texts = self.vae.decode_sentences(z0)
+            # LangVAE has a single bottleneck and expects (B, latent_size).
+            # z0 is (B, K, D) from diffusion, where all K slots are identical replicas
+            # of the single langvae latent (see export_latents.py). Mean-pool to recover it.
+            z0_for_langvae = z0.mean(dim=1)  # (B, K, D) -> (B, D)
+            answer_texts = self.vae.decode_sentences(z0_for_langvae)
         else:
             strategy = self.config.inference.decoding_strategy
             # Beam search not yet implemented; fall back to greedy.
