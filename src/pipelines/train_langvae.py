@@ -163,15 +163,13 @@ def train_langvae(
     )
 
     pipeline = LanguageTrainingPipeline(
-        vae_model=model,
-        trainer_config=trainer_config,
-        train_dataset=train_dataset,
-        eval_dataset=val_dataset,
+        model=model,
+        training_config=trainer_config,
     )
 
     logger.info("Starting LangVAE training (encoder=%s, decoder=%s, latent=%d)…",
                 lc.encoder_model, lc.decoder_model, lc.latent_size)
-    pipeline.train()
+    pipeline(train_data=train_dataset, eval_data=val_dataset)
 
     # ------------------------------------------------------------------ save
     ckpt_dir = Path(lc.checkpoint_dir)
