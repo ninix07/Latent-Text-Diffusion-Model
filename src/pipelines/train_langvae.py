@@ -92,6 +92,17 @@ def train_langvae(
     from langvae.pipelines import LanguageTrainingPipeline
     from transformers import AutoTokenizer
 
+    # transformers>=4.36 returns DynamicCache instead of tuple-of-tuples for
+    # past_key_values; langvae uses pkv[layer][k_or_v] which requires subscript.
+    try:
+        from transformers.cache_utils import DynamicCache
+        if not hasattr(DynamicCache, "__getitem__"):
+            def _dyncache_getitem(self, idx):
+                return self.to_legacy_cache()[idx]
+            DynamicCache.__getitem__ = _dyncache_getitem
+    except ImportError:
+        pass
+
     # ------------------------------------------------------------------ tokeniser
     decoder_tokenizer = AutoTokenizer.from_pretrained(lc.decoder_model)
     if decoder_tokenizer.pad_token is None:
