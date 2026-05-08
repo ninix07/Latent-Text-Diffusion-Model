@@ -11,8 +11,37 @@ from torch.utils.data import Dataset
 
 from src.config.schema import Config
 from src.models.vae.langvae_adapter import LangVAEAdapter
+from src.utils.logging import init_wandb, log_wandb, finish_wandb
+from pythae.trainers.training_callbacks import TrainingCallback
 
 logger = logging.getLogger(__name__)
+
+
+class WandbCallback(TrainingCallback):
+    """Callback to log training metrics to Weights & Biases."""
+
+    def on_log(self, training_config, logs, **kwargs):
+        """Called after each epoch with loss metrics."""
+        epoch = logs.get("epoch", None)
+        train_loss = logs.get("train_epoch_loss", None)
+        eval_loss = logs.get("eval_epoch_loss", None)
+
+        if epoch is not None:
+            metrics = {"epoch": epoch}
+            if train_loss is not None:
+                metrics["train_loss"] = train_loss
+            if eval_loss is not None:
+                metrics["eval_loss"] = eval_loss
+
+            log_wandb(metrics, step=epoch)
+
+            # Log with safe formatting for None values
+            log_msg = f"Epoch {epoch}"
+            if train_loss is not None:
+                log_msg += f" - train_loss: {train_loss:.6f}"
+            if eval_loss is not None:
+                log_msg += f", eval_loss: {eval_loss:.6f}"
+            logger.info(log_msg)
 
 
 def _collect_answer_texts(squad_split: str) -> list[str]:
@@ -164,9 +193,28 @@ def train_langvae(
 
     logger.info("Starting LangVAE training (encoder=%s, decoder=%s, latent=%d)…",
                 lc.encoder_model, lc.decoder_model, lc.latent_size)
+
+    # ------------------------------------------------------------------ wandb setup
+    init_wandb(
+        config={
+            "encoder_model": lc.encoder_model,
+            "decoder_model": lc.decoder_model,
+            "latent_size": lc.latent_size,
+            "batch_size": lc.batch_size,
+            "learning_rate": lc.learning_rate,
+            "num_epochs": lc.num_epochs,
+            "max_beta": lc.max_beta,
+            "kl_threshold": lc.kl_threshold,
+        },
+        project="latent-diffusion-text-langvae",
+    )
+
+    # ------------------------------------------------------------------ callbacks
+    callbacks = [WandbCallback()]
+
     # Note: pipeline expects raw datasets, not DataLoaders. It creates DataLoaders internally
     # with the collate_fn from training_config
-    pipeline(train_data=train_dataset, eval_data=val_dataset)
+    pipeline(train_data=train_dataset, eval_data=val_dataset, callbacks=callbacks)
 
     # ------------------------------------------------------------------ save
     ckpt_dir = Path(lc.checkpoint_dir)
@@ -174,12 +222,25 @@ def train_langvae(
     adapter.save(ckpt_dir)
     logger.info("LangVAE saved to %s", ckpt_dir)
 
+    # ------------------------------------------------------------------ wandb finalize
+    log_wandb({"checkpoint_dir": str(ckpt_dir)}, step=0)
+    finish_wandb()
+
     return adapter
 
 
 if __name__ == "__main__":
     from src.config.loader import create_config_from_cli
 
-    logging.basicConfig(level=logging.INFO)
+    # Configure detailed logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler("langvae_training.log"),
+        ],
+    )
+
     cfg = create_config_from_cli()
     train_langvae(cfg)
