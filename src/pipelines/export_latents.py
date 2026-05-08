@@ -78,7 +78,7 @@ def _export_latents_sequence_vae(
     # the trained embeddings from the checkpoint.
     placeholder_emb = torch.zeros(vocab_size, saved_cfg.vae_arch.embed_dim, device=device)
 
-    vae = SequenceVAE(saved_cfg.vae_arch, pretrained_embeddings=pretrained_emb).to(device)
+    vae = SequenceVAE(saved_cfg.vae_arch, pretrained_embeddings=placeholder_emb).to(device)
     vae.load_state_dict(ckpt["model_state_dict"])
     vae.eval()
 
@@ -158,11 +158,17 @@ def _export_latents_langvae(
         latents_list, context_ids_list, context_mask_list = [], [], []
         question_ids_list, question_mask_list, is_ans_list = [], [], []
 
+        K = config.vae_arch.num_latent_tokens
+
         for batch in loader:
             answer_texts: list[str] = list(batch["answer_text"])
 
             _, mu, _ = adapter.encode_from_texts(answer_texts, deterministic=True)
-            latents_list.append(mu.cpu())
+            # LangVAE returns (B, latent_size); repeat to (B, K, latent_size) for compatibility
+            # with diffusion model which expects (B, K, latent_size).
+            # All K slots get the same value (single bottleneck encoder).
+            mu_repeated = mu.unsqueeze(1).repeat(1, K, 1)  # (B, 128) -> (B, K, 128)
+            latents_list.append(mu_repeated.cpu())
 
             context_ids_list.append(batch["context_ids"])
             context_mask_list.append(batch["context_mask"])
@@ -227,10 +233,23 @@ def _run_langvae_quality_gate(adapter, val_loader, n_batches: int = 5) -> None:
 
 
 def _normalise_and_save(config: Config, train_data: dict, val_data: dict) -> None:
-    """Compute normalisation stats from train, apply to both splits, save."""
+    """Compute normalisation stats from train, apply to both splits, save.
+
+    Handles both 2D (N, D) and 3D (N, K, D) latent tensors.
+    For 3D, computes stats across (N, K) samples, preserving (D,) shape for broadcasting.
+    """
     train_latents = train_data["latents_raw"]
-    norm_mean = train_latents.mean(dim=0)
-    norm_std = train_latents.std(dim=0).clamp(min=1e-6)
+    # Handle both 2D and 3D shapes: always normalize across first axis (samples)
+    if train_latents.ndim == 3:
+        # (N, K, D) -> reshape to (N*K, D), compute stats, reshape back for broadcasting
+        N, K, D = train_latents.shape
+        train_flat = train_latents.view(N * K, D)
+        norm_mean = train_flat.mean(dim=0)  # (D,)
+        norm_std = train_flat.std(dim=0).clamp(min=1e-6)  # (D,)
+    else:
+        # (N, D) case
+        norm_mean = train_latents.mean(dim=0)  # (D,)
+        norm_std = train_latents.std(dim=0).clamp(min=1e-6)  # (D,)
     norm_stats = {"mean": norm_mean, "std": norm_std}
 
     def _normalize(data: dict) -> dict:

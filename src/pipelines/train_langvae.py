@@ -15,34 +15,6 @@ from src.models.vae.langvae_adapter import LangVAEAdapter
 logger = logging.getLogger(__name__)
 
 
-class _AnswerTextDataset(Dataset):
-    """Minimal pythae-compatible dataset wrapping tokenised answer strings.
-
-    LangVAE's LanguageTrainingPipeline expects each sample to be a dict
-    with a ``data`` key containing a 1-D integer tensor of token IDs (encoded
-    with the decoder tokenizer so that SentenceEncoder.recode() can convert
-    them to the encoder's token space internally).
-    """
-
-    def __init__(self, texts: list[str], tokenizer, max_len: int) -> None:
-        self.texts = texts
-        self.tokenizer = tokenizer
-        self.max_len = max_len
-
-    def __len__(self) -> int:
-        return len(self.texts)
-
-    def __getitem__(self, idx: int) -> dict:
-        enc = self.tokenizer(
-            self.texts[idx],
-            max_length=self.max_len,
-            padding="max_length",
-            truncation=True,
-            return_tensors="pt",
-        )
-        return {"data": enc["input_ids"].squeeze(0)}  # (max_len,) int64
-
-
 def _collect_answer_texts(squad_split: str) -> list[str]:
     """Load SQuAD v2 and return a flat list of answer strings."""
     from datasets import load_dataset
@@ -116,8 +88,22 @@ def train_langvae(
                 return self.to_legacy_cache()[idx]
             raise TypeError("Unsupported DynamicCache layout")
 
+        @staticmethod
+        def _dyncache_from_legacy(past_key_values):
+            # Construct DynamicCache from legacy tuple-of-tuples format.
+            cache = DynamicCache()
+            for layer_idx, (k, v) in enumerate(past_key_values):
+                if not hasattr(cache, "key_cache"):
+                    cache.key_cache = []
+                    cache.value_cache = []
+                cache.key_cache.append(k)
+                cache.value_cache.append(v)
+            return cache
+
         # Force-override even if transformers added a different __getitem__.
         DynamicCache.__getitem__ = _dyncache_layer_kv
+        if not hasattr(DynamicCache, "from_legacy_cache"):
+            DynamicCache.from_legacy_cache = _dyncache_from_legacy
     except ImportError:
         pass
 
@@ -143,13 +129,22 @@ def train_langvae(
     model = LangVAE(model_config=vae_config, encoder=encoder, decoder=decoder)
 
     # ------------------------------------------------------------------ datasets
+    from langvae.data_conversion.tokenization import TokenizedDataSet
+
     logger.info("Loading SQuAD train answers…")
     train_texts = _collect_answer_texts("train")
     logger.info("Loading SQuAD val answers…")
     val_texts = _collect_answer_texts("validation")
 
-    train_dataset = _AnswerTextDataset(train_texts, decoder_tokenizer, lc.max_len)
-    val_dataset = _AnswerTextDataset(val_texts, decoder_tokenizer, lc.max_len)
+    # Use langvae's TokenizedDataSet which returns one-hot encoded sparse tensors
+    train_dataset = TokenizedDataSet(
+        train_texts, decoder_tokenizer, max_len=lc.max_len,
+        return_tensors=True, one_hot=True
+    )
+    val_dataset = TokenizedDataSet(
+        val_texts, decoder_tokenizer, max_len=lc.max_len,
+        return_tensors=True, one_hot=True
+    )
     logger.info("Train: %d  Val: %d answer texts", len(train_texts), len(val_texts))
 
     # ------------------------------------------------------------------ trainer
@@ -169,6 +164,8 @@ def train_langvae(
 
     logger.info("Starting LangVAE training (encoder=%s, decoder=%s, latent=%d)…",
                 lc.encoder_model, lc.decoder_model, lc.latent_size)
+    # Note: pipeline expects raw datasets, not DataLoaders. It creates DataLoaders internally
+    # with the collate_fn from training_config
     pipeline(train_data=train_dataset, eval_data=val_dataset)
 
     # ------------------------------------------------------------------ save
