@@ -182,7 +182,7 @@ def train_langvae(
         batch_size=lc.batch_size,
         num_epochs=lc.num_epochs,
         max_beta=lc.max_beta,
-        threshold=lc.kl_threshold,
+        target_kl=lc.kl_threshold,
         output_dir=lc.checkpoint_dir,
     )
 

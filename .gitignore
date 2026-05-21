@@ -12,6 +12,8 @@ env.bak
 *.pt
 checkpoints/
 wandb/
+*.ipynb
+
 
 
 
