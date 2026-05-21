@@ -27,13 +27,14 @@ class WandbCallback(TrainingCallback):
         eval_loss = logs.get("eval_epoch_loss", None)
 
         if epoch is not None:
-            metrics = {"epoch": epoch}
+            metrics = {}
             if train_loss is not None:
-                metrics["train_loss"] = train_loss
+                metrics["loss/train"] = train_loss
             if eval_loss is not None:
-                metrics["eval_loss"] = eval_loss
+                metrics["loss/eval"] = eval_loss
 
-            log_wandb(metrics, step=epoch)
+            if metrics:  # Only log if we have metrics
+                log_wandb(metrics, step=epoch)
 
             # Log with safe formatting for None values
             log_msg = f"Epoch {epoch}"
