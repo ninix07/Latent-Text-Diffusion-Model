@@ -7,6 +7,7 @@ __pycache__
 .venv
 venv
 env
+LangVAE/
 ENV
 env.bak
 *.pt
