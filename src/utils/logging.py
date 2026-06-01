@@ -54,6 +54,11 @@ def init_wandb(config: dict, project: str = "latent-diffusion-text") -> None:
         _wandb_ok = False
 
 
+def is_wandb_active() -> bool:
+    """Return True if a W&B run is initialised and logging is enabled."""
+    return _wandb_ok
+
+
 def log_wandb(metrics: dict[str, Any], step: int) -> None:
     """Log metrics to W&B. No-op if wandb is not active."""
     if not _wandb_ok:

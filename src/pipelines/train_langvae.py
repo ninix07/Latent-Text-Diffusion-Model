@@ -11,13 +11,13 @@ from torch.utils.data import Dataset
 
 from src.config.schema import Config
 from src.models.vae.langvae_adapter import LangVAEAdapter
-from src.utils.logging import init_wandb, log_wandb, finish_wandb
+from src.utils.logging import init_wandb, log_wandb, finish_wandb, is_wandb_active
 from pythae.trainers.training_callbacks import TrainingCallback
 
 logger = logging.getLogger(__name__)
 
 
-class WandbCallback(TrainingCallback):
+class CustomWandbCallback(TrainingCallback):
     """Callback to log training metrics to Weights & Biases."""
 
     def on_log(self, training_config, logs, **kwargs):
@@ -34,6 +34,13 @@ class WandbCallback(TrainingCallback):
             metrics["loss/eval"] = eval_loss
 
         if metrics and epoch is not None:
+            # Surface whether the metrics actually reached W&B — a failed
+            # init_wandb() makes log_wandb() a silent no-op, which looks like
+            # "training is fine but no graphs appear".
+            logger.info(
+                " custom wandb log -> step=%s metrics=%s (wandb_active=%s)",
+                epoch, metrics, is_wandb_active(),
+            )
             log_wandb(metrics, step=epoch)
 
         log_msg = f"Epoch {epoch}"
@@ -218,7 +225,7 @@ def train_langvae(
     )
 
     # ------------------------------------------------------------------ callbacks
-    callbacks = [WandbCallback()]
+    callbacks = [CustomWandbCallback()]
 
     # Note: pipeline expects raw datasets, not DataLoaders. It creates DataLoaders internally
     # with the collate_fn from training_config
