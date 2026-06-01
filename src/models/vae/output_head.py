@@ -1,28 +1,32 @@
-"""Output projection: cosine-similarity logits with learned temperature."""
+"""Output projection: plain linear over decoder hidden states.
+
+Previously this module used cosine-similarity logits with a learned
+temperature. That was non-standard, made weight decay ineffective (since
+the projection is L2-normalised before use), and required tuning
+``log_tau`` to avoid vanishing logits at init. Replaced with a standard
+``nn.Linear`` whose weight is intended to be tied to the decoder token
+embedding (handled in :class:`SequenceVAE`).
+"""
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 class OutputProjection(nn.Module):
-    """Produce logits via cosine similarity with a learned temperature.
+    """Linear projection from decoder hidden state to vocabulary logits.
 
     Parameters
     ----------
     embed_dim : int
-        Hidden dimension of decoder output.
     vocab_size : int
-        Vocabulary size.
     pretrained_embeddings : Tensor, optional
-        Weight matrix of shape ``(vocab_size, embed_dim)`` to initialise the
-        projection.  A **detached copy** is used.
+        Shape ``(vocab_size, embed_dim)``. When supplied the projection
+        weight is initialised from it (a detached copy). The weight is
+        intended to be tied to the decoder token embedding by the parent
+        :class:`SequenceVAE`.
     """
-
-    LOG_TAU_MIN = -2.0  # tau ≥ ~0.135; prevents logits from vanishing
-    LOG_TAU_MAX = 4.6   # ≈ ln(100)
 
     def __init__(
         self,
@@ -32,30 +36,10 @@ class OutputProjection(nn.Module):
     ) -> None:
         super().__init__()
         self.linear = nn.Linear(embed_dim, vocab_size, bias=False)
-
         if pretrained_embeddings is not None:
             with torch.no_grad():
                 self.linear.weight.copy_(pretrained_embeddings.detach())
 
-        # Initialize tau ≈ 20 so the softmax is meaningfully peaked from step 1.
-        # At log_tau=0 (tau=1) the initial CE loss ≈ log(30K) ≈ 10.3 with near-zero
-        # gradients; log_tau=3.0 (tau≈20) sharpens the softmax immediately.
-        self.log_tau = nn.Parameter(torch.tensor([3.0]))
-
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Compute cosine-similarity logits scaled by temperature.
-
-        Parameters
-        ----------
-        hidden_states : Tensor (B, L, embed_dim)
-
-        Returns
-        -------
-        Tensor (B, L, vocab_size)
-        """
-        h = F.normalize(hidden_states, dim=-1)
-        w = F.normalize(self.linear.weight, dim=-1)
-        cos_sim = F.linear(h, w)  # (B, L, V)
-
-        tau = torch.exp(torch.clamp(self.log_tau, min=self.LOG_TAU_MIN, max=self.LOG_TAU_MAX))
-        return cos_sim * tau
+        """Hidden ``(B, L, embed_dim)`` → logits ``(B, L, vocab_size)``."""
+        return self.linear(hidden_states)

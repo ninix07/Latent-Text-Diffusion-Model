@@ -43,6 +43,12 @@ def _validate(
     all_preds: list[str] = []
     all_refs: list[list[str]] = []
 
+    # Use the deterministic latent (μ) for evaluation and the model's own
+    # autoregressive decoder so EM/F1 reflect real inference behaviour rather
+    # than teacher-forced argmax at the ground-truth length.
+    eos_token_id = getattr(tokenizer, "eos_token_id", None) if tokenizer is not None else None
+    gen_max_len = vae.config.max_answer_len
+
     with torch.no_grad():
         for batch in val_loader:
             answer_ids = batch["answer_ids"].to(device)
@@ -63,15 +69,13 @@ def _validate(
             n_batches += 1
 
             if tokenizer is not None and "all_answer_texts" in batch:
-                pred_ids = logits.argmax(dim=-1)  # (B, L)
+                # Autoregressively decode from μ. No ground-truth length leak.
+                pred_ids = vae.decode_to_tokens(
+                    mu, strategy="greedy", max_len=gen_max_len, eos_token_id=eos_token_id
+                )  # (B, max_len)
                 for i in range(pred_ids.size(0)):
-                    # Truncate to real token positions so that tokens predicted
-                    # at padding positions cannot corrupt the decoded string.
-                    length = int(answer_mask[i].sum().item())
-                    # skip_special_tokens removes [NULL_ANS] → empty string for
-                    # unanswerable, which is the correct SQuAD prediction.
                     pred_text = tokenizer.decode(
-                        pred_ids[i, :length].tolist(), skip_special_tokens=True
+                        pred_ids[i].tolist(), skip_special_tokens=True
                     ).strip()
                     all_preds.append(pred_text)
                     all_refs.append(batch["all_answer_texts"][i])

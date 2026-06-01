@@ -1,7 +1,8 @@
 langvae:
   encoder_model: "bert-base-cased"
   decoder_model: "gpt2"
-  latent_size: 128
+  latent_size: 128             # Per-slot latent dim
+  num_latent_tokens: 16        # K slots — match vae_arch.num_latent_tokens for diffusion compat
   max_len: 50
   learning_rate: 0.001
   batch_size: 8

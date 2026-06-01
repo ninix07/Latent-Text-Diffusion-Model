@@ -146,7 +146,11 @@ def _export_latents_langvae(
 
     lc = config.langvae
     adapter = LangVAEAdapter.from_pretrained(
-        ckpt_dir, device=device, latent_size=lc.latent_size, max_len=lc.max_len
+        ckpt_dir,
+        device=device,
+        latent_size=lc.latent_size,
+        max_len=lc.max_len,
+        num_latent_tokens=lc.num_latent_tokens,
     )
 
     # We still need the context/question IDs from the SQuAD dataloader.
@@ -158,17 +162,24 @@ def _export_latents_langvae(
         latents_list, context_ids_list, context_mask_list = [], [], []
         question_ids_list, question_mask_list, is_ans_list = [], [], []
 
-        K = config.vae_arch.num_latent_tokens
+        K = lc.num_latent_tokens
+        if K != config.vae_arch.num_latent_tokens:
+            logger.warning(
+                "langvae.num_latent_tokens=%d disagrees with vae_arch.num_latent_tokens=%d; "
+                "the diffusion path keys off vae_arch — make sure they match.",
+                K, config.vae_arch.num_latent_tokens,
+            )
 
         for batch in loader:
             answer_texts: list[str] = list(batch["answer_text"])
 
+            # SeqSentenceEncoder returns mu of shape (B, K, latent_size) directly;
+            # no per-slot duplication needed.
             _, mu, _ = adapter.encode_from_texts(answer_texts, deterministic=True)
-            # LangVAE returns (B, latent_size); repeat to (B, K, latent_size) for compatibility
-            # with diffusion model which expects (B, K, latent_size).
-            # All K slots get the same value (single bottleneck encoder).
-            mu_repeated = mu.unsqueeze(1).repeat(1, K, 1)  # (B, 128) -> (B, K, 128)
-            latents_list.append(mu_repeated.cpu())
+            if mu.dim() == 2:
+                # Fallback for legacy single-slot checkpoints: repeat across K.
+                mu = mu.unsqueeze(1).repeat(1, K, 1)
+            latents_list.append(mu.cpu())
 
             context_ids_list.append(batch["context_ids"])
             context_mask_list.append(batch["context_mask"])

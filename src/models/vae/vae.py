@@ -68,10 +68,14 @@ class SequenceVAE(nn.Module):
             pretrained_embeddings=pretrained_embeddings,
         )
 
-        # NOTE: weight tying between encoder embeddings and output head has
-        # been intentionally removed.  The encoder and decoder now have
-        # separate embeddings so reconstruction gradients do not conflict
-        # with the encoder's latent-space training signal (Bug 8).
+        # Tie decoder token embedding ↔ output head weight. The decoder learns
+        # a token representation and the output head needs to score the same
+        # representations — tying halves the parameter count for the V×D
+        # matrix and gives consistent gradients to the shared weight. The
+        # encoder embedding is intentionally NOT tied: its gradients come
+        # from the latent-space training signal, which would conflict with
+        # reconstruction gradients (the original "Bug 8").
+        self.decoder.token_embedding.weight = self.output_head.linear.weight
 
     def encode(
         self,

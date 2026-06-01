@@ -57,9 +57,16 @@ def compute_vae_loss(
     else:
         kl = kl_raw.mean(dim=0).sum()
 
-    # Target KL ceiling: clamp KL contribution in the loss so gradients stop
-    # once KL exceeds the target (prevents over-regularisation).
-    kl_for_loss = kl.clamp(max=target_kl) if target_kl is not None else kl
+    # Target KL behaviour: previously this clamped KL contribution at
+    # ``target_kl`` so gradients went to zero above the ceiling. That silently
+    # disabled KL regularisation for the entire run once exceeded. Switched to
+    # a soft hinge: penalise only the *excess* over the target, with full
+    # gradient flow everywhere. Below the target the KL term vanishes
+    # (free-budget); above it, gradient direction pushes KL back down.
+    if target_kl is not None:
+        kl_for_loss = torch.relu(kl - target_kl)
+    else:
+        kl_for_loss = kl
     total = recon + beta * kl_for_loss
     return total, recon, kl
 

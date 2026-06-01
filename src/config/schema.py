@@ -152,7 +152,8 @@ class LangVAEConfig:
 
     encoder_model: str = "bert-base-cased"       # HF encoder (weights frozen during VAE training)
     decoder_model: str = "gpt2"                  # HF decoder (weights frozen during VAE training)
-    latent_size: int = 128                        # Must equal vae_arch.latent_dim for diffusion compat
+    latent_size: int = 128                        # Per-slot latent dim. Match vae_arch.latent_dim for diffusion compat.
+    num_latent_tokens: int = 16                  # K — number of latent slots produced by Perceiver pool over BERT.
     max_len: int = 50                             # Max answer token length (decoder tokenizer)
     learning_rate: float = 1e-3                  # Optimizer LR for bottleneck projection layers
     batch_size: int = 50                         # Training batch size

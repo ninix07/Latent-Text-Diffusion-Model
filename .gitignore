@@ -14,8 +14,7 @@ env.bak
 checkpoints/
 wandb/
 *.ipynb
-
-
+.DS_Store
 
 
 
