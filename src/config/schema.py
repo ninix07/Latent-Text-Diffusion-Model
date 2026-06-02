@@ -71,6 +71,15 @@ class VAETrainingConfig:
     noise_aug_sigma: float = 0.0  # Extra Gaussian noise std added to z before
     # decode (decoder noise robustness for diffusion-time latents)
     noise_aug_prob: float = 0.0  # Per-step probability of applying noise aug
+    null_train_fraction: float = 0.10  # Target fraction of unanswerable (NULL)
+    # examples in the VAE *training* set. SQuAD v2 is ~33% null and the old
+    # balanced sampler inflated that to 50%, starving real-answer reconstruction.
+    # Subsampling nulls to 10% concentrates gradient on answer text. Only affects
+    # VAE training; export/classifier/diffusion still see the full null set.
+    null_loss_weight: float = 0.1  # Per-sample reconstruction-loss weight applied
+    # to NULL examples (answerable examples keep weight 1.0). Further rebalances
+    # the decoder's gradient toward answer text without removing nulls — they
+    # still pass through the encoder so their latents stay structured for export.
 
 
 @dataclass(frozen=True)

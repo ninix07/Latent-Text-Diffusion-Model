@@ -109,6 +109,7 @@ class SequenceVAE(nn.Module):
         free_bits: float = 0.0,
         target_kl: float | None = None,
         noise_aug_sigma: float = 0.0,
+        recon_weights: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """Full forward pass (teacher-forced).
 
@@ -140,7 +141,8 @@ class SequenceVAE(nn.Module):
         # boundaries because it can only see previous positions.
         logits = self.decode(token_ids, z_decode, mask)
         total, recon, kl = compute_vae_loss(
-            logits, token_ids, mask, mu, log_var, beta, free_bits, target_kl
+            logits, token_ids, mask, mu, log_var, beta, free_bits, target_kl,
+            recon_weights=recon_weights,
         )
         loss_dict = {"total": total, "recon": recon, "kl": kl}
         return logits, z, mu, log_var, loss_dict

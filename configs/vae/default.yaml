@@ -34,6 +34,10 @@ vae_training:
   val_every_n_steps: 500 # Validate every N training steps
   noise_aug_sigma: 0.1 # Extra Gaussian std injected into z before decode (decoder noise robustness)
   noise_aug_prob: 0.5 # Probability of applying noise augmentation each step
+  null_train_fraction: 0.10 # Keep only 10% NULL / 90% answerable in the VAE training set
+  # (SQuAD v2 is ~33% null; the old balanced sampler inflated it to 50%). Export,
+  # classifier and diffusion still use the FULL dataset — this only affects VAE training.
+  null_loss_weight: 0.1 # Downweight NULL examples' reconstruction loss (answerable = 1.0)
 
 quality_gate:
   min_recon_accuracy: 0.85 # Min token-level reconstruction accuracy

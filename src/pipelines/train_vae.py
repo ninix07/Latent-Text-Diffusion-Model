@@ -143,7 +143,14 @@ def train_vae(
         from src.data.loaders import create_squad_dataloaders
 
         tokenizer = create_tokenizer(config.encoder.model_name)
-        train_loader, val_loader = create_squad_dataloaders(config, tokenizer)
+        # Subsample NULL examples in the VAE training set (and skip the
+        # answerability-balanced sampler) so reconstruction gradient focuses on
+        # real answer text. Export/classifier/diffusion still use the full set.
+        train_loader, val_loader = create_squad_dataloaders(
+            config,
+            tokenizer,
+            null_train_fraction=config.vae_training.null_train_fraction,
+        )
     else:
         tokenizer = create_tokenizer(config.encoder.model_name)
 
@@ -275,6 +282,18 @@ def train_vae(
             else:
                 aug_sigma = 0.0
 
+            # Downweight NULL (unanswerable) examples in the reconstruction loss
+            # so the decoder's gradient focuses on real answer text. Answerable
+            # examples keep weight 1.0; nulls get tc.null_loss_weight. Nulls are
+            # still encoded/decoded, so their latents remain available for export.
+            recon_weights = None
+            if "is_answerable" in batch and tc.null_loss_weight != 1.0:
+                is_answerable = batch["is_answerable"].to(device)
+                recon_weights = torch.ones(
+                    answer_ids.size(0), device=device
+                )
+                recon_weights[~is_answerable] = tc.null_loss_weight
+
             logits, z, mu, log_var, loss_dict = vae(
                 answer_ids,
                 answer_mask,
@@ -282,6 +301,7 @@ def train_vae(
                 free_bits=tc.free_bits,
                 target_kl=tc.target_kl,
                 noise_aug_sigma=aug_sigma,
+                recon_weights=recon_weights,
             )
             loss = loss_dict["total"] / tc.grad_accum_steps
             loss.backward()

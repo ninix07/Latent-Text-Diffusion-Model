@@ -17,6 +17,7 @@ def compute_vae_loss(
     beta: float,
     free_bits: float = 0.0,
     target_kl: Optional[float] = None,
+    recon_weights: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute total VAE loss = recon + beta * kl.
 
@@ -33,6 +34,10 @@ def compute_vae_loss(
         KL ceiling.  The KL contribution to the loss is clamped to this
         value, so gradients stop flowing once KL exceeds the target.
         Set to None to disable (no ceiling, full KL is always penalized).
+    recon_weights : (B,) or None
+        Optional per-sequence weight on the reconstruction term. Used to
+        downweight NULL (unanswerable) examples so the decoder's gradient
+        focuses on real answer text. ``None`` weights every sequence equally.
 
     Returns
     -------
@@ -49,10 +54,14 @@ def compute_vae_loss(
     B, _, V = logits.shape
     logits_flat = logits.reshape(-1, V)
     target_flat = target_ids.reshape(-1)
-    mask_flat = mask.reshape(-1).float()
 
-    ce = F.cross_entropy(logits_flat, target_flat, reduction="none")
-    recon = (ce * mask_flat).sum() / B
+    # Per-sequence NLL (sum over real tokens), then averaged over the batch.
+    ce = F.cross_entropy(logits_flat, target_flat, reduction="none").view(B, -1)
+    per_seq = (ce * mask.float()).sum(dim=1)  # (B,)
+    if recon_weights is not None:
+        # Downweight selected sequences (e.g. NULL examples) before averaging.
+        per_seq = per_seq * recon_weights.to(per_seq.dtype)
+    recon = per_seq.sum() / B
 
     # KL: latent is (B, K, D). Clamp per-sample per-(K,D) BEFORE averaging
     # over the batch so individual samples cannot collapse a dimension
