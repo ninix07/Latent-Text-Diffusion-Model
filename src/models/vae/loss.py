@@ -38,14 +38,21 @@ def compute_vae_loss(
     -------
     (total_loss, recon_loss, kl_loss)
     """
-    # Reconstruction: cross-entropy ignoring padding
-    B, L, V = logits.shape
+    # Reconstruction: cross-entropy ignoring padding.
+    # Sum the token NLL per sequence and average over the BATCH (not over
+    # tokens). This puts recon on the same scale as the KL term below, which
+    # is summed over the (K, D) latent dims and averaged over the batch.
+    # A per-token mean instead leaves recon ~100x smaller than the KL sum,
+    # so once beta reaches 1.0 the cheapest minimum is to crush the posterior
+    # to the prior (posterior collapse). Matching scales makes beta=1 the
+    # true sequence-ELBO.
+    B, _, V = logits.shape
     logits_flat = logits.reshape(-1, V)
     target_flat = target_ids.reshape(-1)
     mask_flat = mask.reshape(-1).float()
 
     ce = F.cross_entropy(logits_flat, target_flat, reduction="none")
-    recon = (ce * mask_flat).sum() / mask_flat.sum().clamp(min=1)
+    recon = (ce * mask_flat).sum() / B
 
     # KL: latent is (B, K, D). Clamp per-sample per-(K,D) BEFORE averaging
     # over the batch so individual samples cannot collapse a dimension

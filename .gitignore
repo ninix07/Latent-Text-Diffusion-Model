@@ -7,7 +7,6 @@ __pycache__
 .venv
 venv
 env
-LangVAE/
 ENV
 env.bak
 *.pt
@@ -15,6 +14,7 @@ checkpoints/
 wandb/
 *.ipynb
 .DS_Store
+LangVAE/
 
 
 

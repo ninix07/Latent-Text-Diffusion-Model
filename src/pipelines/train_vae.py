@@ -223,6 +223,8 @@ def train_vae(
             "kl_per_dim_max": 0.0,
             "kl_per_dim_min": 0.0,
             "kl_per_dim_std": 0.0,
+            "kl_per_dim_mean": 0.0,
+            "dead_dims": 0.0,
         }
         epoch_steps = 0
 
@@ -313,6 +315,12 @@ def train_vae(
                 "kl_per_dim_max": kl_per_dim_mean.max().item(),
                 "kl_per_dim_min": kl_per_dim_mean.min().item(),
                 "kl_per_dim_std": kl_per_dim_mean.std().item(),
+                # Direct collapse signals: average information per latent
+                # coordinate, and how many coordinates are effectively dead
+                # (<0.01 nats). With healthy training kl_per_dim_mean stays
+                # well above free_bits and dead_dims stays low.
+                "kl_per_dim_mean": kl_per_dim_mean.mean().item(),
+                "dead_dims": int((kl_per_dim_mean < 0.01).sum().item()),
             }
 
             for k, v in step_metrics.items():
@@ -338,6 +346,8 @@ def train_vae(
                     "latent/kl_per_dim_max": step_metrics["kl_per_dim_max"],
                     "latent/kl_per_dim_min": step_metrics["kl_per_dim_min"],
                     "latent/kl_per_dim_std": step_metrics["kl_per_dim_std"],
+                    "latent/kl_per_dim_mean": step_metrics["kl_per_dim_mean"],
+                    "latent/dead_dims": step_metrics["dead_dims"],
                     "epoch": epoch,
                 },
                 step=global_step,
