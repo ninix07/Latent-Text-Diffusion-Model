@@ -46,7 +46,18 @@ def _validate(
     # Use the deterministic latent (μ) for evaluation and the model's own
     # autoregressive decoder so EM/F1 reflect real inference behaviour rather
     # than teacher-forced argmax at the ground-truth length.
-    eos_token_id = getattr(tokenizer, "eos_token_id", None) if tokenizer is not None else None
+    #
+    # The data layer appends [SEP] (sep_token_id) as the end-of-answer marker
+    # (see squad_dataset.py), so generation must stop on [SEP]. A BERT
+    # tokenizer has no eos_token (eos_token_id is None), so reading
+    # eos_token_id would disable early stopping entirely — generation would
+    # emit all max_answer_len tokens and the trailing junk after [SEP] drives
+    # EM/F1 to ~0. Prefer sep_token_id, fall back to eos_token_id.
+    eos_token_id = None
+    if tokenizer is not None:
+        eos_token_id = getattr(tokenizer, "sep_token_id", None)
+        if eos_token_id is None:
+            eos_token_id = getattr(tokenizer, "eos_token_id", None)
     gen_max_len = vae.config.max_answer_len
 
     with torch.no_grad():
@@ -413,9 +424,26 @@ def train_vae(
                     ema.restore()
                     logger.info("Saved VAE checkpoint (EMA weights): %s", ckpt_path)
                 else:
-                    patience_counter += 1
+                    # Only accrue patience once beta has finished ramping.
+                    # During warmup the training objective is still changing
+                    # (KL pressure rising), so a recon plateau here is expected
+                    # and must NOT end the run — otherwise early stopping can
+                    # fire before beta ever reaches beta_end, checkpointing a
+                    # model optimised for a weak-KL objective. `beta` is the
+                    # value used for this step's training pass (in scope from
+                    # the batch loop above).
+                    if beta >= tc.beta_end - 1e-9:
+                        patience_counter += 1
+                    else:
+                        logger.info(
+                            "step=%d  val plateau ignored (beta=%.4f < beta_end=%.4f, "
+                            "still warming up)", global_step, beta, tc.beta_end,
+                        )
 
-                if patience_counter > tc.patience:
+                # Early stopping is only armed after beta warmup completes, so
+                # the warmup phase always runs to completion regardless of when
+                # val loss plateaus.
+                if beta >= tc.beta_end - 1e-9 and patience_counter > tc.patience:
                     logger.info("Early stopping at step %d", global_step)
                     finish_wandb()
                     return final_metrics

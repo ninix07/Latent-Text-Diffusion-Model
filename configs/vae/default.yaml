@@ -23,10 +23,10 @@ vae_training:
   beta_schedule: monotonic # "monotonic" or "cyclical" (Fu et al. 2019)
   beta_cycles: 40 # Number of annealing cycles (cyclical only)
   beta_cycle_ratio: 0.5 # Fraction of each cycle spent ramping
-  free_bits: 0.1 # Min KL per latent dim — floors per-dim KL so each of the
-  # K*D=2048 coordinates carries real info. The clamp zeroes the *downward*
-  # KL gradient below this floor, preventing per-dim collapse without adding
-  # collapse pressure. Tunable in 0.05–0.25.
+  free_bits: 0.02 # Min KL per latent dim. Total floor = 0.02 * K*D = ~41 nats,
+  # which sits BELOW the observed true_kl (~80) so the penalized KL can still
+  # move and respond to training instead of pinning at the floor. A value like
+  # 0.1 floors at ~205 > data info (~80 nats) and freezes the KL term.
   ema_decay: 0.999 # EMA decay rate for validation weights
   target_kl: null # KL hinge disabled. A finite value (e.g. 320) drives total
   # KL toward ~0.15 nats/dim across 2048 dims — i.e. toward collapse. Rely on

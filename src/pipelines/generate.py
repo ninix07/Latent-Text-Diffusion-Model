@@ -105,11 +105,18 @@ class GenerationPipeline:
             # Beam search not yet implemented; fall back to greedy.
             if strategy == "beam_search":
                 strategy = "greedy"
+            # Stop on [SEP] (the end-of-answer marker the VAE was trained to
+            # emit). BERT tokenizers have no eos_token, so prefer sep_token_id;
+            # without a stop token generation runs to max_len and emits junk.
+            stop_id = getattr(self.tokenizer, "sep_token_id", None)
+            if stop_id is None:
+                stop_id = getattr(self.tokenizer, "eos_token_id", None)
             token_ids = self.vae.decode_to_tokens(
                 z0,
                 strategy=strategy,
                 temperature=self.config.inference.nucleus_temperature,
                 top_p=self.config.inference.nucleus_top_p,
+                eos_token_id=stop_id,
             )
             answer_texts = [
                 self.tokenizer.decode(token_ids[i].tolist(), skip_special_tokens=True)

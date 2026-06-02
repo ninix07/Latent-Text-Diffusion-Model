@@ -63,8 +63,9 @@ class VAETrainingConfig:
         # i.e. near-collapse. Rely on cyclical annealing + free_bits instead.
     )
     beta_cycle_ratio: float = 0.5  # Fraction of cycle spent ramping
-    free_bits: float = 0.1  # Min KL per latent dim (free bits) — forces each
-    # latent coordinate to carry real information and prevents per-dim collapse.
+    free_bits: float = 0.02  # Min KL per latent dim. Total floor = free_bits *
+    # K*D should sit below the natural true_kl so the penalized KL stays
+    # responsive; too high (e.g. 0.1 over 2048 dims ⇒ ~205) freezes the term.
     ema_decay: float = 0.999  # EMA decay rate for validation weights
     val_every_n_steps: int = 500  # Validation frequency (steps)
     noise_aug_sigma: float = 0.0  # Extra Gaussian noise std added to z before
