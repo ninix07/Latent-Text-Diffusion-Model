@@ -160,6 +160,7 @@ class LangVAEConfig:
     num_epochs: int = 10                         # Training epochs
     max_beta: float = 1.0                        # Max KL weight in cyclical schedule
     kl_threshold: float = 0.5                    # KL threshold for cyclical scheduler
+    log_every_n_steps: int = 50                  # Per-batch W&B logging cadence (0 disables per-step logs)
     checkpoint_dir: str = "checkpoints/langvae"  # Where to save the trained model
 
 

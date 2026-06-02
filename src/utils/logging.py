@@ -59,14 +59,24 @@ def is_wandb_active() -> bool:
     return _wandb_ok
 
 
-def log_wandb(metrics: dict[str, Any], step: int) -> None:
-    """Log metrics to W&B. No-op if wandb is not active."""
+def log_wandb(metrics: dict[str, Any], step: int | None = None) -> None:
+    """Log metrics to W&B. No-op if wandb is not active.
+
+    When ``step`` is None, wandb auto-increments its internal step on each call.
+    Prefer that over passing explicit step values from mixed sources (per-batch
+    counters vs per-epoch indices): wandb requires step to be monotonically
+    increasing across the whole run, so interleaving a small epoch index after a
+    large batch counter makes wandb silently drop the later log.
+    """
     if not _wandb_ok:
         return
     try:
-        _wandb.log(metrics, step=step)
+        if step is None:
+            _wandb.log(metrics)
+        else:
+            _wandb.log(metrics, step=step)
     except Exception as exc:
-        logger.warning("wandb.log failed at step %d: %s", step, exc)
+        logger.warning("wandb.log failed at step %s: %s", step, exc)
 
 
 def finish_wandb() -> None:

@@ -29,19 +29,24 @@ class CustomWandbCallback(TrainingCallback):
 
         metrics = {}
         if train_loss is not None:
-            metrics["loss/train"] = train_loss
+            metrics["loss/train_epoch"] = train_loss
         if eval_loss is not None:
-            metrics["loss/eval"] = eval_loss
+            metrics["loss/eval_epoch"] = eval_loss
 
         if metrics and epoch is not None:
+            # Carry epoch as a value, not as the wandb step. The per-batch
+            # forward wrapper logs on wandb's auto-incrementing step axis; mixing
+            # a small epoch index in as an explicit step would be non-monotonic
+            # and wandb would drop these epoch points.
+            metrics["epoch"] = epoch
             # Surface whether the metrics actually reached W&B — a failed
             # init_wandb() makes log_wandb() a silent no-op, which looks like
             # "training is fine but no graphs appear".
             logger.info(
-                " custom wandb log -> step=%s metrics=%s (wandb_active=%s)",
+                " custom wandb log -> epoch=%s metrics=%s (wandb_active=%s)",
                 epoch, metrics, is_wandb_active(),
             )
-            log_wandb(metrics, step=epoch)
+            log_wandb(metrics)
 
         log_msg = f"Epoch {epoch}"
         if train_loss is not None:
@@ -226,6 +231,35 @@ def train_langvae(
 
     # ------------------------------------------------------------------ callbacks
     callbacks = [CustomWandbCallback()]
+
+    # ------------------------------------------------------------------ per-step W&B logging
+    # The trainer's on_log callback only fires at epoch end — one point per
+    # epoch, and nothing at all when a run crashes mid-epoch (which is exactly
+    # how the NaN failure looked: only system charts, no loss curve). Wrap the
+    # model's forward to emit per-batch losses while training. This is version-
+    # proof: it does not depend on which trainer/callback the installed langvae
+    # build happens to invoke, only on the ModelOutput contract (loss/recon_loss/
+    # reg_loss) and model.cur_beta, which are stable across langvae versions.
+    if lc.log_every_n_steps and lc.log_every_n_steps > 0:
+        _orig_forward = model.forward
+        _step = {"n": 0}
+
+        def _logging_forward(inputs, **kwargs):
+            out = _orig_forward(inputs, **kwargs)
+            # Only log on training passes; eval batches set model.training False.
+            if model.training:
+                n = _step["n"]
+                if n % lc.log_every_n_steps == 0:
+                    log_wandb({
+                        "loss/train_step": float(out.loss),
+                        "loss/recon_step": float(out.recon_loss),
+                        "loss/kl_step": float(out.reg_loss),
+                        "beta": float(model.cur_beta),
+                    })
+                _step["n"] = n + 1
+            return out
+
+        model.forward = _logging_forward
 
     # Note: pipeline expects raw datasets, not DataLoaders. It creates DataLoaders internally
     # with the collate_fn from training_config

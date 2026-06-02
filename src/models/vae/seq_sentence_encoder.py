@@ -24,6 +24,10 @@ from torch import nn, Tensor
 from pythae.models.base.base_utils import ModelOutput
 from langvae.encoders import SentenceEncoder
 
+# Bound on encoder log-variance. exp(15) ~ 3.3e6 stays finite even summed over
+# flat_latent_dim slots; wide enough that a well-behaved posterior never hits it.
+LOG_VAR_CLAMP = 15.0
+
 
 class SeqSentenceEncoder(SentenceEncoder):
     """Sequence-latent encoder for LangVAE.
@@ -136,6 +140,15 @@ class SeqSentenceEncoder(SentenceEncoder):
 
         slot_out = self.slot_proj(pooled)  # (B, K, 2 * D)
         mean, log_var = slot_out.chunk(2, dim=-1)  # each (B, K, D)
+
+        # NaN guard. pythae's KL sums exp(log_var) over all K*D=flat_latent_dim
+        # slots; an unbounded log_var lets exp() overflow to +inf within an
+        # epoch, which propagates to the loss as NaN and trips the trainer's
+        # ArithmeticError. Clamp to a range wide enough not to distort a healthy
+        # posterior but tight enough that exp() stays finite. langvae also clips
+        # grads *before* backward (a no-op), so this clamp is the only bound on
+        # the bottleneck statistics.
+        log_var = log_var.clamp(-LOG_VAR_CLAMP, LOG_VAR_CLAMP)
 
         # Flatten for pythae's flat-latent KL computation.
         mean_flat = mean.reshape(B, -1)
