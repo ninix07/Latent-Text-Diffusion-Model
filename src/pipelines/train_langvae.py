@@ -11,38 +11,44 @@ from torch.utils.data import Dataset
 
 from src.config.schema import Config
 from src.models.vae.langvae_adapter import LangVAEAdapter
-from src.utils.logging import init_wandb, log_wandb, finish_wandb
+from src.utils.logging import init_wandb, log_wandb, finish_wandb, is_wandb_active
 from pythae.trainers.training_callbacks import TrainingCallback
 
 logger = logging.getLogger(__name__)
 
 
-class WandbCallback(TrainingCallback):
+class CustomWandbCallback(TrainingCallback):
     """Callback to log training metrics to Weights & Biases."""
 
     def on_log(self, training_config, logs, **kwargs):
         """Called after each epoch with loss metrics."""
-        epoch = logs.get("epoch", None)
+        # pythae BaseTrainer passes epoch via kwargs["global_step"], not in logs.
+        epoch = kwargs.get("global_step")
         train_loss = logs.get("train_epoch_loss", None)
         eval_loss = logs.get("eval_epoch_loss", None)
 
-        if epoch is not None:
-            metrics = {}
-            if train_loss is not None:
-                metrics["loss/train"] = train_loss
-            if eval_loss is not None:
-                metrics["loss/eval"] = eval_loss
+        metrics = {}
+        if train_loss is not None:
+            metrics["loss/train"] = train_loss
+        if eval_loss is not None:
+            metrics["loss/eval"] = eval_loss
 
-            if metrics:  # Only log if we have metrics
-                log_wandb(metrics, step=epoch)
+        if metrics and epoch is not None:
+            # Surface whether the metrics actually reached W&B — a failed
+            # init_wandb() makes log_wandb() a silent no-op, which looks like
+            # "training is fine but no graphs appear".
+            logger.info(
+                " custom wandb log -> step=%s metrics=%s (wandb_active=%s)",
+                epoch, metrics, is_wandb_active(),
+            )
+            log_wandb(metrics, step=epoch)
 
-            # Log with safe formatting for None values
-            log_msg = f"Epoch {epoch}"
-            if train_loss is not None:
-                log_msg += f" - train_loss: {train_loss:.6f}"
-            if eval_loss is not None:
-                log_msg += f", eval_loss: {eval_loss:.6f}"
-            logger.info(log_msg)
+        log_msg = f"Epoch {epoch}"
+        if train_loss is not None:
+            log_msg += f" - train_loss: {train_loss:.6f}"
+        if eval_loss is not None:
+            log_msg += f", eval_loss: {eval_loss:.6f}"
+        logger.info(log_msg)
 
 
 def _collect_answer_texts(squad_split: str) -> list[str]:
@@ -87,12 +93,12 @@ def train_langvae(
 
     # ------------------------------------------------------------------ imports
     from langvae import LangVAE
-    from langvae.encoders import SentenceEncoder
     from langvae.decoders import SentenceDecoder
     from pythae.models.vae import VAEConfig
     from langvae.trainers import CyclicalScheduleKLThresholdTrainerConfig
     from langvae.pipelines import LanguageTrainingPipeline
     from transformers import AutoTokenizer
+    from src.models.vae.seq_sentence_encoder import SeqSentenceEncoder
 
     # transformers>=4.36 returns DynamicCache instead of tuple-of-tuples for
     # past_key_values; langvae uses pkv[layer][k_or_v] which requires subscript.
@@ -143,19 +149,25 @@ def train_langvae(
         decoder_tokenizer.pad_token = decoder_tokenizer.eos_token
 
     # ------------------------------------------------------------------ model
-    encoder = SentenceEncoder(
+    # Flat latent dim consumed by pythae's KL = K * D. The K=num_latent_tokens
+    # slots are produced by the SeqSentenceEncoder's Perceiver query pool and
+    # the downstream LangVAEAdapter reshapes back to (B, K, D) for diffusion.
+    flat_latent_dim = lc.num_latent_tokens * lc.latent_size
+
+    encoder = SeqSentenceEncoder(
         model_path=lc.encoder_model,
         latent_size=lc.latent_size,
         decoder_tokenizer=decoder_tokenizer,
+        num_latent_tokens=lc.num_latent_tokens,
         device=str(device),
     )
     decoder = SentenceDecoder(
         model_path=lc.decoder_model,
-        latent_size=lc.latent_size,
+        latent_size=flat_latent_dim,
         max_len=lc.max_len,
         device=device,
     )
-    vae_config = VAEConfig(latent_dim=lc.latent_size)
+    vae_config = VAEConfig(latent_dim=flat_latent_dim)
     model = LangVAE(model_config=vae_config, encoder=encoder, decoder=decoder)
 
     # ------------------------------------------------------------------ datasets
@@ -201,6 +213,8 @@ def train_langvae(
             "encoder_model": lc.encoder_model,
             "decoder_model": lc.decoder_model,
             "latent_size": lc.latent_size,
+            "num_latent_tokens": lc.num_latent_tokens,
+            "flat_latent_dim": flat_latent_dim,
             "batch_size": lc.batch_size,
             "learning_rate": lc.learning_rate,
             "num_epochs": lc.num_epochs,
@@ -211,7 +225,7 @@ def train_langvae(
     )
 
     # ------------------------------------------------------------------ callbacks
-    callbacks = [WandbCallback()]
+    callbacks = [CustomWandbCallback()]
 
     # Note: pipeline expects raw datasets, not DataLoaders. It creates DataLoaders internally
     # with the collate_fn from training_config
@@ -219,7 +233,13 @@ def train_langvae(
 
     # ------------------------------------------------------------------ save
     ckpt_dir = Path(lc.checkpoint_dir)
-    adapter = LangVAEAdapter(model, decoder_tokenizer, lc.latent_size, lc.max_len)
+    adapter = LangVAEAdapter(
+        model,
+        decoder_tokenizer,
+        latent_size=lc.latent_size,
+        max_len=lc.max_len,
+        num_latent_tokens=lc.num_latent_tokens,
+    )
     adapter.save(ckpt_dir)
     logger.info("LangVAE saved to %s", ckpt_dir)
 

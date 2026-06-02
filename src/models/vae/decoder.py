@@ -4,8 +4,83 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from src.models.positional import sinusoidal_encoding as _sinusoidal_encoding
+
+
+# ----------------------------------------------------------------------
+# Incremental KV-cached attention helpers
+#
+# nn.TransformerEncoder exposes no internal KV cache, so naive
+# autoregressive generation reprocesses the full ``[prefix | decoder]``
+# stack every step (O(N²)). These helpers reproduce the forward pass of
+# a ``nn.TransformerEncoderLayer`` (default ``norm_first=False`` post-LN
+# variant) while caching the per-layer keys and values, taking generation
+# down to O(N). Weights are read directly off the trained layer so no
+# parameters are duplicated.
+
+def _self_attn_cached(
+    attn: nn.MultiheadAttention,
+    x: torch.Tensor,
+    kv_cache: dict,
+) -> torch.Tensor:
+    """Run self-attention with a growing K/V cache.
+
+    Parameters
+    ----------
+    attn : nn.MultiheadAttention
+        Module whose weights are reused (assumed to be a standard
+        combined-QKV projection — the only variant our decoder uses).
+    x : Tensor (B, T_new, D)
+        Hidden states for the *new* positions only. During prefix
+        initialisation, T_new == K (whole prefix); during stepping,
+        T_new == 1.
+    kv_cache : dict
+        Mutated in place. Keys ``"k"`` and ``"v"`` hold the running
+        cache of shape ``(B, num_heads, T_total, head_dim)``.
+    """
+    B, T, D = x.shape
+    H = attn.num_heads
+    dh = D // H
+
+    qkv = F.linear(x, attn.in_proj_weight, attn.in_proj_bias)  # (B, T, 3D)
+    q, k, v = qkv.split(D, dim=-1)
+    q = q.view(B, T, H, dh).transpose(1, 2)
+    k = k.view(B, T, H, dh).transpose(1, 2)
+    v = v.view(B, T, H, dh).transpose(1, 2)
+
+    if kv_cache.get("k") is None:
+        full_k, full_v = k, v
+    else:
+        full_k = torch.cat([kv_cache["k"], k], dim=2)
+        full_v = torch.cat([kv_cache["v"], v], dim=2)
+    kv_cache["k"] = full_k
+    kv_cache["v"] = full_v
+
+    # is_causal=False: the cache is already strictly past relative to the
+    # new queries, so causality is preserved without an explicit mask.
+    out = F.scaled_dot_product_attention(q, full_k, full_v, is_causal=False)
+    out = out.transpose(1, 2).contiguous().view(B, T, D)
+    return F.linear(out, attn.out_proj.weight, attn.out_proj.bias)
+
+
+def _layer_forward_cached(
+    layer: nn.TransformerEncoderLayer,
+    x: torch.Tensor,
+    kv_cache: dict,
+) -> torch.Tensor:
+    """One ``TransformerEncoderLayer`` step with KV cache (post-LN variant).
+
+    Mirrors ``layer.forward`` for ``norm_first=False`` and skips the
+    train-only dropouts (this code path is used in ``torch.no_grad``
+    generation, where ``layer.eval()`` makes them no-ops anyway).
+    """
+    attn_out = _self_attn_cached(layer.self_attn, x, kv_cache)
+    x = layer.norm1(x + attn_out)
+    ffn_out = layer.linear2(layer.activation(layer.linear1(x)))
+    x = layer.norm2(x + ffn_out)
+    return x
 
 
 class VAEDecoder(nn.Module):
@@ -59,6 +134,13 @@ class VAEDecoder(nn.Module):
         # of z already matches num_latent_tokens — the encoder produces
         # exactly one latent vector per prefix slot.
         self.latent_proj = nn.Linear(latent_dim, embed_dim)
+
+        # Learnable positional embedding for the K latent prefix slots so the
+        # attention layers can distinguish slot order. Without this, slots are
+        # only differentiated by content from the encoder's learned queries.
+        self.prefix_pos_embed = nn.Parameter(
+            torch.randn(1, num_latent_tokens, embed_dim) * 0.02
+        )
 
         # Transformer encoder used with a custom causal+prefix mask so that
         # the architecture is effectively a causal decoder with KV injection.
@@ -137,8 +219,8 @@ class VAEDecoder(nn.Module):
         dec_input = torch.cat([start, tok_emb], dim=1)  # (B, L, D)
         dec_input = dec_input + self.pe[:, :L, :]
 
-        # Latent prefix
-        prefix = self._project_latent(z)  # (B, K, D)
+        # Latent prefix (+ learnable slot positional embedding)
+        prefix = self._project_latent(z) + self.prefix_pos_embed  # (B, K, D)
 
         # Concatenate: [prefix | decoder_tokens]
         x = torch.cat([prefix, dec_input], dim=1)  # (B, K+L, D)
@@ -178,7 +260,7 @@ class VAEDecoder(nn.Module):
         top_p: float = 0.9,
         eos_token_id: int | None = None,
     ) -> torch.Tensor:
-        """Autoregressively generate token ids from latent *z*.
+        """Autoregressively generate token ids from latent *z* with KV cache.
 
         Parameters
         ----------
@@ -195,28 +277,41 @@ class VAEDecoder(nn.Module):
         Returns
         -------
         Tensor (B, max_len)
-        """
-        import torch.nn.functional as F
 
+        Notes
+        -----
+        The K latent prefix is processed once and its per-layer K/V are
+        cached, then each decoder step only pushes the single new token
+        through the network — overall complexity drops from O(N²) to O(N).
+        Weights are read directly off ``self.transformer.layers`` so this
+        path shares the trained parameters with the teacher-forced
+        ``forward`` path.
+        """
         B = z.size(0)
-        K = self.num_latent_tokens
         device = z.device
 
-        prefix = self._project_latent(z)  # (B, K, D)
-        start = self.start_embed.expand(B, -1, -1)  # (B, 1, D)
-        dec_input = start + self.pe[:, :1, :]  # (B, 1, D)
+        # ---- 1. Initialise the per-layer K/V cache from the prefix.
+        prefix = self._project_latent(z) + self.prefix_pos_embed  # (B, K, D)
+        layers = list(self.transformer.layers)
+        caches: list[dict] = [{} for _ in layers]
+        x = prefix
+        for layer, kv in zip(layers, caches):
+            x = _layer_forward_cached(layer, x, kv)
+        # x is the prefix hidden state at the final layer — we don't need it.
+
+        # ---- 2. First decoder token: <start> + PE[0].
+        dec_input = self.start_embed.expand(B, -1, -1) + self.pe[:, :1, :]  # (B, 1, D)
 
         generated: list[torch.Tensor] = []
         finished = torch.zeros(B, dtype=torch.bool, device=device)
 
         for step in range(max_len):
-            L_so_far = step + 1
-            x = torch.cat([prefix, dec_input], dim=1)  # (B, K+L_so_far, D)
-            attn_mask = self._build_attn_mask(K, L_so_far, device)
-
-            out = self.transformer(x, mask=attn_mask)
-            last_hidden = out[:, K + step : K + step + 1, :]  # (B, 1, D)
-            logits = output_head(last_hidden).squeeze(1)  # (B, V)
+            # Push only the new token through each layer; the cache supplies
+            # all earlier keys/values (prefix + previously generated tokens).
+            x = dec_input
+            for layer, kv in zip(layers, caches):
+                x = _layer_forward_cached(layer, x, kv)
+            logits = output_head(x).squeeze(1)  # (B, V)
 
             if strategy == "greedy":
                 next_id = logits.argmax(dim=-1)  # (B,)
@@ -240,7 +335,6 @@ class VAEDecoder(nn.Module):
             generated.append(next_id)
 
             if eos_token_id is not None and bool(finished.all().item()):
-                # Pad the remaining positions with eos so the output stays (B, max_len).
                 remaining = max_len - (step + 1)
                 if remaining > 0:
                     pad = torch.full(
@@ -249,9 +343,10 @@ class VAEDecoder(nn.Module):
                     generated.extend([pad] * remaining)
                 break
 
-            # Embed and append for next step
-            next_emb = self.token_embedding(next_id).unsqueeze(1)  # (B, 1, D)
-            next_emb = next_emb + self.pe[:, L_so_far : L_so_far + 1, :]
-            dec_input = torch.cat([dec_input, next_emb], dim=1)
+            # Prepare the next decoder token: token embedding + positional.
+            next_pos = step + 1
+            dec_input = (
+                self.token_embedding(next_id).unsqueeze(1) + self.pe[:, next_pos : next_pos + 1, :]
+            )
 
         return torch.stack(generated, dim=1)  # (B, max_len)

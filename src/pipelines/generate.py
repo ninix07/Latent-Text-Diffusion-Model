@@ -96,11 +96,10 @@ class GenerationPipeline:
         # LangVAEAdapter exposes decode_sentences() and returns text directly.
         # SequenceVAE exposes decode_to_tokens() and needs detokenization.
         if hasattr(self.vae, "decode_sentences"):
-            # LangVAE has a single bottleneck and expects (B, latent_size).
-            # z0 is (B, K, D) from diffusion, where all K slots are identical replicas
-            # of the single langvae latent (see export_latents.py). Mean-pool to recover it.
-            z0_for_langvae = z0.mean(dim=1)  # (B, K, D) -> (B, D)
-            answer_texts = self.vae.decode_sentences(z0_for_langvae)
+            # LangVAEAdapter.decode_sentences accepts (B, K, D) and flattens
+            # internally to the (B, K*D) shape pythae's flat-latent decoder
+            # consumes. No mean-pool — every slot carries distinct info.
+            answer_texts = self.vae.decode_sentences(z0)
         else:
             strategy = self.config.inference.decoding_strategy
             # Beam search not yet implemented; fall back to greedy.
