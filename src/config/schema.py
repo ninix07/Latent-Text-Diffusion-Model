@@ -71,9 +71,14 @@ class VAETrainingConfig:
         # i.e. near-collapse. Rely on cyclical annealing + free_bits instead.
     )
     beta_cycle_ratio: float = 0.5  # Fraction of cycle spent ramping
-    free_bits: float = 0.02  # Min KL per latent dim. Total floor = free_bits *
-    # K*D should sit below the natural true_kl so the penalized KL stays
-    # responsive; too high (e.g. 0.1 over 2048 dims ⇒ ~205) freezes the term.
+    free_bits: float = 0.3  # Per-dim KL ALLOWANCE the encoder may use penalty-free
+    # (target-rate VAE). 0.02 was the actual root cause of the collapse: the KL
+    # penalty pinned the posterior at the floor before the decoder learned to read
+    # z, so z stayed ~noise and the decoder ignored it (gen = "the the the").
+    # Controlled sweep on the reproducing regime: 0.02→7/128 unique gens (dead),
+    # 0.1→52, 0.3→113, 0.5→122. 0.3 (≈K*D*0.3 nats floor) keeps the latent alive
+    # without letting KL run away (β=0 gave true_kl~1400). Watch train/true_kl: it
+    # should sit well above K*D*0.02 and NOT decay toward the floor.
     ema_decay: float = 0.999  # EMA decay rate for validation weights
     val_every_n_steps: int = 500  # Validation frequency (steps)
     noise_aug_sigma: float = 0.0  # Extra Gaussian noise std added to z before

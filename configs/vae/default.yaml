@@ -42,11 +42,12 @@ vae_training:
   # under the monotonic ramp (everything died ~step 900 as beta first crossed ~0.1).
   beta_cycles: 40 # Number of annealing cycles (cyclical only)
   beta_cycle_ratio: 0.5 # Fraction of each cycle spent ramping
-  free_bits: 0.02 # Per-dim KL ALLOWANCE (Kingma 2016): no penalty below this, so
-  # the model may keep up to 0.02 * K*D = ~20 nats "for free". NOTE this does NOT
-  # push KL up — it only removes downward pressure below the floor; the train/kl
-  # curve pinning exactly at K*D*free_bits is the signature of full collapse (every
-  # dim below threshold). Watch train/true_kl (unclamped), not train/kl, for health.
+  free_bits: 0.3 # Per-dim KL ALLOWANCE (target-rate VAE). 0.02 was the ROOT CAUSE
+  # of the collapse — the KL penalty pinned the posterior at the floor before the
+  # decoder learned to read z, so z stayed ~noise → decoder ignored it → gen "the
+  # the the". Controlled sweep (reproducing regime): unique generations 0.02→7/128,
+  # 0.1→52, 0.3→113, 0.5→122. 0.3 keeps the latent alive (true_kl ~K*D*0.3) without
+  # KL running away. Watch train/true_kl — it must stay ABOVE the floor, not decay.
   ema_decay: 0.999 # EMA decay rate for validation weights
   target_kl: null # KL hinge disabled. A finite value (e.g. 320) drives total
   # KL toward ~0.15 nats/dim across 2048 dims — i.e. toward collapse. Rely on
