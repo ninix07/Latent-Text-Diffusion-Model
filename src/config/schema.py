@@ -38,6 +38,12 @@ class VAEArchConfig:
     dropout: float = 0.1  # Dropout rate
     max_answer_len: int = 50  # Max answer token length
     num_latent_tokens: int = 8  # Pseudo-tokens for latent KV injection
+    latent_pos_inject: bool = False  # Add a K-pooled projection of z to every
+    # decoder token input (not just the KV prefix). Stops the causal decoder
+    # from bypassing z via teacher forcing — the main posterior-collapse cure.
+    use_bow_head: bool = False  # Build a bag-of-words head that predicts the
+    # answer's token set from z alone (Zhao et al. 2017). Trained via
+    # ``vae_training.bow_loss_weight``; forces z to stay informative.
 
 
 @dataclass(frozen=True)
@@ -88,6 +94,10 @@ class VAETrainingConfig:
     # ground-truth token — the cure for the latent-bypass / posterior-collapse
     # that floored reconstruction (recon stuck ~33, true_kl falling, gen ~empty).
     # Targets are unchanged. 0.0 disables. ~0.3-0.5 is the usual sweet spot.
+    bow_loss_weight: float = 0.0  # Weight on the bag-of-words auxiliary loss
+    # (requires vae_arch.use_bow_head). Added directly to the total loss like a
+    # second reconstruction term; uses the same per-sequence-sum reduction so
+    # the weight is comparable to recon. 0.0 disables. ~0.3-1.0 is typical.
 
 
 @dataclass(frozen=True)

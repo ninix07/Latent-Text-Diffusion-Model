@@ -112,10 +112,12 @@ class VAEDecoder(nn.Module):
         max_answer_len: int,
         vocab_size: int,
         num_latent_tokens: int = 8,
+        latent_pos_inject: bool = False,
     ) -> None:
         super().__init__()
         self.num_latent_tokens = num_latent_tokens
         self.embed_dim = embed_dim
+        self.latent_pos_inject = latent_pos_inject
 
         # Decoder's own token embedding (separate from encoder — avoids
         # conflicting gradient streams, see Bug 8).
@@ -141,6 +143,18 @@ class VAEDecoder(nn.Module):
         self.prefix_pos_embed = nn.Parameter(
             torch.randn(1, num_latent_tokens, embed_dim) * 0.02
         )
+
+        # Per-position latent injection. The KV-prefix alone lets a strong
+        # causal decoder bypass z entirely (it can copy the teacher-forced
+        # previous token), which drives posterior collapse on short answers.
+        # Adding a K-pooled projection of z to *every* decoder token input
+        # makes z reachable at each step regardless of attention, so the
+        # decoder cannot ignore it. Separate projection from ``latent_proj``
+        # (different role: a single global context vector, not per-slot KV).
+        if self.latent_pos_inject:
+            self.latent_context_proj = nn.Linear(latent_dim, embed_dim)
+        else:
+            self.latent_context_proj = None
 
         # Transformer encoder used with a custom causal+prefix mask so that
         # the architecture is effectively a causal decoder with KV injection.
@@ -240,6 +254,12 @@ class VAEDecoder(nn.Module):
         dec_input = torch.cat([start, tok_emb], dim=1)  # (B, L, D)
         dec_input = dec_input + self.pe[:, :L, :]
 
+        # Per-position latent injection: add a single K-pooled latent context
+        # vector to every decoder token input (broadcasts over L).
+        if self.latent_context_proj is not None:
+            ctx = self.latent_context_proj(z.mean(dim=1, keepdim=True))  # (B, 1, D)
+            dec_input = dec_input + ctx
+
         # Latent prefix (+ learnable slot positional embedding)
         prefix = self._project_latent(z) + self.prefix_pos_embed  # (B, K, D)
 
@@ -320,8 +340,18 @@ class VAEDecoder(nn.Module):
             x = _layer_forward_cached(layer, x, kv)
         # x is the prefix hidden state at the final layer — we don't need it.
 
+        # Per-position latent context (mirrors teacher-forced ``forward``):
+        # a single K-pooled vector added to every decoder token input.
+        ctx = (
+            self.latent_context_proj(z.mean(dim=1, keepdim=True))
+            if self.latent_context_proj is not None
+            else None
+        )  # (B, 1, D) or None
+
         # ---- 2. First decoder token: <start> + PE[0].
         dec_input = self.start_embed.expand(B, -1, -1) + self.pe[:, :1, :]  # (B, 1, D)
+        if ctx is not None:
+            dec_input = dec_input + ctx
 
         generated: list[torch.Tensor] = []
         finished = torch.zeros(B, dtype=torch.bool, device=device)
@@ -364,10 +394,13 @@ class VAEDecoder(nn.Module):
                     generated.extend([pad] * remaining)
                 break
 
-            # Prepare the next decoder token: token embedding + positional.
+            # Prepare the next decoder token: token embedding + positional
+            # (+ the same per-position latent context as the prefix step).
             next_pos = step + 1
             dec_input = (
                 self.token_embedding(next_id).unsqueeze(1) + self.pe[:, next_pos : next_pos + 1, :]
             )
+            if ctx is not None:
+                dec_input = dec_input + ctx
 
         return torch.stack(generated, dim=1)  # (B, max_len)

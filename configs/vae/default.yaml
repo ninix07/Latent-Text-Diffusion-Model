@@ -6,7 +6,17 @@ vae_arch:
   num_heads: 8 # Attention heads per layer
   dropout: 0.1 # Dropout rate
   max_answer_len: 50 # Max answer sequence length
-  num_latent_tokens: 16 # Pseudo-tokens for latent KV injection in decoder (LD4LG=32, PLANNER=16)
+  num_latent_tokens: 8 # Pseudo-tokens for latent KV injection in decoder. Halved
+  # from 16 → K*D = 8*128 = 1024 latent dims. SQuAD answers are 1-5 words, so 2048
+  # dims was wildly over-capacity and trivially collapsed; smaller latent resists it.
+  latent_pos_inject: true # Add a K-pooled projection of z to EVERY decoder token
+  # input (not only the KV prefix). The causal decoder could otherwise reconstruct
+  # short answers from teacher-forced tokens alone and ignore z → posterior collapse
+  # (gen = "the the and", active_dims → 0). Per-position injection makes z reachable
+  # at every step so it cannot be bypassed.
+  use_bow_head: true # Bag-of-words head predicting the answer's token set from z
+  # alone (Zhao et al. 2017). Trained via vae_training.bow_loss_weight; a decoder-
+  # independent gradient that keeps the latent informative.
 
 vae_training:
   learning_rate: 5.0e-4 # Peak learning rate for AdamW. 1e-4 was ~10x too low:
@@ -25,14 +35,18 @@ vae_training:
   grad_accum_steps: 1 # Gradient accumulation steps
   beta_start: 0.01 # KL weight start (small positive avoids ignoring KL entirely)
   beta_end: 1.0 # KL weight end
-  beta_warmup_steps: 10000 # Steps to linearly ramp beta (gradual to avoid loss spike)
-  beta_schedule: monotonic # "monotonic" or "cyclical" (Fu et al. 2019)
+  beta_warmup_steps: 10000 # Steps to linearly ramp beta (monotonic schedule only)
+  beta_schedule: cyclical # "monotonic" or "cyclical" (Fu et al. 2019). Cyclical
+  # repeatedly drops beta back to beta_start, giving the decoder periodic low-KL
+  # windows to (re)learn to use z — a safeguard against the one-shot collapse seen
+  # under the monotonic ramp (everything died ~step 900 as beta first crossed ~0.1).
   beta_cycles: 40 # Number of annealing cycles (cyclical only)
   beta_cycle_ratio: 0.5 # Fraction of each cycle spent ramping
-  free_bits: 0.02 # Min KL per latent dim. Total floor = 0.02 * K*D = ~41 nats,
-  # which sits BELOW the observed true_kl (~80) so the penalized KL can still
-  # move and respond to training instead of pinning at the floor. A value like
-  # 0.1 floors at ~205 > data info (~80 nats) and freezes the KL term.
+  free_bits: 0.02 # Per-dim KL ALLOWANCE (Kingma 2016): no penalty below this, so
+  # the model may keep up to 0.02 * K*D = ~20 nats "for free". NOTE this does NOT
+  # push KL up — it only removes downward pressure below the floor; the train/kl
+  # curve pinning exactly at K*D*free_bits is the signature of full collapse (every
+  # dim below threshold). Watch train/true_kl (unclamped), not train/kl, for health.
   ema_decay: 0.999 # EMA decay rate for validation weights
   target_kl: null # KL hinge disabled. A finite value (e.g. 320) drives total
   # KL toward ~0.15 nats/dim across 2048 dims — i.e. toward collapse. Rely on
@@ -44,15 +58,20 @@ vae_training:
   # (SQuAD v2 is ~33% null; the old balanced sampler inflated it to 50%). Export,
   # classifier and diffusion still use the FULL dataset — this only affects VAE training.
   null_loss_weight: 0.1 # Downweight NULL examples' reconstruction loss (answerable = 1.0)
-  word_dropout: 0.4 # Prob of replacing each teacher-forced decoder INPUT token with
+  word_dropout: 0.5 # Prob of replacing each teacher-forced decoder INPUT token with
   # [MASK] during training (Bowman 2016). Forces decoder to use latent z instead of
   # copying the previous gold token — fixes latent bypass / posterior collapse
   # (recon was stuck ~33, true_kl falling, generation ~empty). Targets unchanged.
+  # Raised 0.4 → 0.5 to lean harder on z alongside per-position injection + BoW.
+  bow_loss_weight: 0.5 # Weight on the bag-of-words auxiliary loss (needs
+  # vae_arch.use_bow_head). Forces z to encode which answer tokens appear,
+  # independent of the autoregressive decoder. Same per-sequence-sum reduction as
+  # recon, so 0.5 makes it ~half a reconstruction term. The primary collapse cure.
 
 quality_gate:
   min_recon_accuracy: 0.85 # Min token-level reconstruction accuracy
-  min_mean_kl: 1.0 # Min mean KL to avoid posterior collapse (rescaled for K=16 sequence latent)
-  min_active_dims: 64 # Min latent dims with variance > threshold (~3% of K*D = 16*128 = 2048)
+  min_mean_kl: 1.0 # Min mean KL to avoid posterior collapse (K=8 sequence latent)
+  min_active_dims: 32 # Min latent dims with variance > threshold (~3% of K*D = 8*128 = 1024)
   min_centroid_distance: 0.5 # Min L2 between answerable/unanswerable centroids
   active_dim_variance_threshold: 0.1 # Variance cutoff for "active" dimension
   max_dead_slots: 0 # Max latent slots with zero active dims (per-slot collapse)

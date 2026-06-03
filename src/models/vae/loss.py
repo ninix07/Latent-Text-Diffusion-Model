@@ -96,6 +96,41 @@ def compute_vae_loss(
     return total, recon, kl
 
 
+def compute_bow_loss(
+    bow_logits: torch.Tensor,
+    target_ids: torch.Tensor,
+    mask: torch.Tensor,
+) -> torch.Tensor:
+    """Bag-of-words auxiliary loss (Zhao et al. 2017).
+
+    Forces the latent *z* to encode *which* tokens appear in the answer,
+    independent of their order. ``bow_logits`` is a single per-sequence
+    distribution over the vocabulary predicted from *z* alone (no decoder,
+    no teacher forcing). Each real target token must be assigned high
+    probability under that distribution, so the encoder cannot collapse the
+    posterior without paying here — the standard, reliable cure for latent
+    bypass / posterior collapse in text VAEs.
+
+    Parameters
+    ----------
+    bow_logits : (B, V) — order-agnostic vocab logits predicted from z.
+    target_ids : (B, L) — answer token ids.
+    mask : (B, L) — 1 for real tokens, 0 for padding.
+
+    Returns
+    -------
+    Scalar loss, summed over real tokens per sequence and averaged over the
+    batch — the same reduction as the reconstruction term, so the BoW weight
+    is comparable to ``beta``.
+    """
+    B = target_ids.size(0)
+    log_probs = F.log_softmax(bow_logits, dim=-1)  # (B, V)
+    # Gather the log-prob assigned to each target token: (B, L).
+    tok_log_probs = log_probs.gather(1, target_ids)
+    nll = -(tok_log_probs * mask.float()).sum() / B
+    return nll
+
+
 def compute_beta(
     step: int,
     start: float,

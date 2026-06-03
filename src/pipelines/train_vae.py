@@ -27,6 +27,7 @@ def _validate(
     beta: float = 1.0,
     free_bits: float = 0.0,
     target_kl: float | None = None,
+    bow_weight: float = 0.0,
     tokenizer=None,
 ) -> dict[str, float]:
     """Run one pass over val_loader and return averaged metrics.
@@ -38,7 +39,9 @@ def _validate(
     from src.evaluation.squad_metrics import compute_squad_metrics
 
     vae.eval()
-    totals: dict[str, float] = {"total": 0.0, "recon": 0.0, "kl": 0.0, "true_kl": 0.0}
+    totals: dict[str, float] = {
+        "total": 0.0, "recon": 0.0, "kl": 0.0, "bow": 0.0, "true_kl": 0.0,
+    }
     n_batches = 0
     all_preds: list[str] = []
     all_refs: list[list[str]] = []
@@ -70,8 +73,9 @@ def _validate(
                 beta=beta,
                 free_bits=free_bits,
                 target_kl=target_kl,
+                bow_weight=bow_weight,
             )
-            for k in ("total", "recon", "kl"):
+            for k in ("total", "recon", "kl", "bow"):
                 totals[k] += loss_dict[k].item()
             # Raw KL (no free-bits floor) to detect posterior collapse.
             # mu/log_var are (B, K, D); mean over batch then sum over (K, D).
@@ -202,13 +206,17 @@ def train_vae(
             "word dropout will be inactive.", tc.word_dropout,
         )
 
-    # Separate weight decay groups: exclude biases and log_tau.
-    # log_tau needs to grow freely (decay fights convergence); biases shouldn't
-    # be decayed (standard practice). output_head.linear.weight is L2-normalized
-    # before use so its magnitude doesn't affect logit direction — but since it is
-    # now tied to encoder.embedding.weight we leave it in the decay group so
-    # embedding vectors stay bounded.
-    _no_decay = {"bias", "log_tau"}
+    # Separate weight decay groups: exclude biases, log_tau, and the
+    # variational heads. Biases shouldn't be decayed (standard practice) and
+    # log_tau needs to grow freely. Critically, ``mu_head``/``logvar_head``
+    # are EXCLUDED: weight decay on them pulls their weights toward zero, which
+    # drives μ→0 and log_var→0, i.e. q(z|x)→N(0,I). When the decoder isn't yet
+    # using z, that decay is the dominant force and it actively collapses the
+    # posterior (true_kl observed crashing to ~0 with all dims dead). Removing
+    # decay here lets reconstruction + BoW gradients decide the posterior.
+    # output_head.linear.weight stays in the decay group (tied to the embedding,
+    # kept bounded).
+    _no_decay = {"bias", "log_tau", "mu_head", "logvar_head"}
     param_groups = [
         {
             "params": [
@@ -257,6 +265,7 @@ def train_vae(
             "loss": 0.0,
             "recon": 0.0,
             "kl": 0.0,
+            "bow": 0.0,
             "true_kl": 0.0,
             "grad_norm": 0.0,
             "mu_mean": 0.0,
@@ -332,6 +341,7 @@ def train_vae(
                 recon_weights=recon_weights,
                 word_dropout=tc.word_dropout,
                 mask_token_id=word_dropout_id,
+                bow_weight=tc.bow_loss_weight,
             )
             loss = loss_dict["total"] / tc.grad_accum_steps
             loss.backward()
@@ -364,6 +374,7 @@ def train_vae(
                 "loss": loss_dict["total"].item(),
                 "recon": loss_dict["recon"].item(),
                 "kl": loss_dict["kl"].item(),
+                "bow": loss_dict["bow"].item(),
                 "true_kl": true_kl,
                 "grad_norm": grad_norm,
                 "mu_mean": mu.mean().item(),
@@ -393,6 +404,7 @@ def train_vae(
                     "train/loss": step_metrics["loss"],
                     "train/recon": step_metrics["recon"],
                     "train/kl": step_metrics["kl"],
+                    "train/bow": step_metrics["bow"],
                     "train/true_kl": step_metrics["true_kl"],
                     "train/grad_norm": step_metrics["grad_norm"],
                     "train/beta": beta,
@@ -428,6 +440,7 @@ def train_vae(
                     beta=tc.beta_end,
                     free_bits=tc.free_bits,
                     target_kl=tc.target_kl,
+                    bow_weight=tc.bow_loss_weight,
                     tokenizer=tokenizer,
                 )
                 ema.restore()
@@ -460,6 +473,7 @@ def train_vae(
                         "val/loss": val_metrics["total"],
                         "val/recon": val_metrics["recon"],
                         "val/kl": val_metrics["kl"],
+                        "val/bow": val_metrics["bow"],
                         "val/true_kl": val_metrics["true_kl"],
                         "val/em": val_metrics.get("em", float("nan")),
                         "val/f1": val_metrics.get("f1", float("nan")),
@@ -530,7 +544,8 @@ def train_vae(
         final_metrics = _validate(
             vae, val_loader, device,
             beta=tc.beta_end, free_bits=tc.free_bits,
-            target_kl=tc.target_kl, tokenizer=tokenizer,
+            target_kl=tc.target_kl, bow_weight=tc.bow_loss_weight,
+            tokenizer=tokenizer,
         )
         ema.restore()
         final_metrics.pop("_samples", None)
