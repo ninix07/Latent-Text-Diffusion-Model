@@ -44,7 +44,8 @@ class VAEArchConfig:
 class VAETrainingConfig:
     """VAE training hyperparameters."""
 
-    learning_rate: float = 1e-4  # Peak learning rate
+    learning_rate: float = 5e-4  # Peak learning rate (1e-4 was ~10x too low →
+    # recon stuck ~20; 5e-4 lets the decoder learn to read the latent)
     batch_size: int = 64  # Training batch size
     epochs: int = 30  # Maximum training epochs
     patience: int = 5  # Early stopping patience (val checks)

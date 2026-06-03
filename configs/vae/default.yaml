@@ -9,7 +9,10 @@ vae_arch:
   num_latent_tokens: 16 # Pseudo-tokens for latent KV injection in decoder (LD4LG=32, PLANNER=16)
 
 vae_training:
-  learning_rate: 1.0e-4 # Peak learning rate for AdamW
+  learning_rate: 5.0e-4 # Peak learning rate for AdamW. 1e-4 was ~10x too low:
+  # recon stuck ~20 (acc ~0.25) in controlled tests; at 5e-4 the decoder learns
+  # to read the latent and recon drops sharply (acc >0.8). Warmup (500) stabilizes
+  # the higher peak. Drop to 3e-4 if loss spikes at full 768-dim scale.
   batch_size: 64 # Samples per training batch
   epochs: 30 # Maximum training epochs
   patience: 5 # Early stopping patience (val checks)
