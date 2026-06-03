@@ -15,7 +15,10 @@ vae_training:
   patience: 5 # Early stopping patience (val checks)
   warmup_steps: 500 # LR warmup steps
   weight_decay: 0.01 # AdamW weight decay
-  grad_clip_max_norm: 1.0 # Max gradient norm
+  grad_clip_max_norm: 5.0 # Max gradient norm. 1.0 was far too aggressive for a
+  # ~25M-param model dominated by the 30k×768 tied embedding: observed grad_norm
+  # sat at ~15-20 the whole run, so clip-to-1.0 throttled the effective LR ~15-20x
+  # and the model underfit (recon plateaued, F1/EM ~0). 5.0 lets real updates through.
   grad_accum_steps: 1 # Gradient accumulation steps
   beta_start: 0.01 # KL weight start (small positive avoids ignoring KL entirely)
   beta_end: 1.0 # KL weight end
