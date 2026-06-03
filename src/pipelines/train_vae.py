@@ -15,7 +15,7 @@ from src.training.ema import EMAManager
 from src.training.optimizer import create_optimizer, create_scheduler
 from src.training.grad_utils import clip_gradients, accumulation_step
 from src.training.checkpoint import save_checkpoint
-from src.utils.logging import init_wandb, log_wandb, finish_wandb
+from src.utils.logging import init_wandb, log_wandb, log_wandb_table, finish_wandb
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +103,22 @@ def _validate(
         result["has_ans_em"] = squad["has_ans_em"]
         result["has_ans_f1"] = squad["has_ans_f1"]
 
+        # Stash a few decoded samples so the caller can log them to W&B for
+        # eyeballing what the decoder actually generates. Prefer answerable
+        # examples (the failing case) but include a couple of nulls too.
+        from src.evaluation.squad_metrics import token_f1
+
+        rows: list[list] = []
+        ans_rows, null_rows = [], []
+        for pred, golds in zip(all_preds, all_refs):
+            gold0 = golds[0] if golds else ""
+            answerable = bool(golds) and any(g.strip() for g in golds)
+            f1 = max((token_f1(pred, g) for g in golds), default=0.0) if answerable else float(pred.strip() == "")
+            row = [gold0, pred, "yes" if answerable else "no", round(f1, 3)]
+            (ans_rows if answerable else null_rows).append(row)
+        rows = ans_rows[:20] + null_rows[:5]
+        result["_samples"] = rows  # type: ignore[assignment]
+
     return result
 
 
@@ -173,6 +189,18 @@ def train_vae(
     vae = SequenceVAE(config.vae_arch, pretrained_embeddings=pretrained_emb).to(device)
 
     tc = config.vae_training
+
+    # Token id used to corrupt teacher-forced decoder inputs for word dropout.
+    # Prefer [MASK]; fall back to [UNK] (both exist in BERT) so the feature is
+    # never silently disabled by a missing id.
+    word_dropout_id = getattr(tokenizer, "mask_token_id", None)
+    if word_dropout_id is None:
+        word_dropout_id = getattr(tokenizer, "unk_token_id", None)
+    if tc.word_dropout > 0.0 and word_dropout_id is None:
+        logger.warning(
+            "word_dropout=%.2f requested but tokenizer has no mask/unk token id; "
+            "word dropout will be inactive.", tc.word_dropout,
+        )
 
     # Separate weight decay groups: exclude biases and log_tau.
     # log_tau needs to grow freely (decay fights convergence); biases shouldn't
@@ -302,6 +330,8 @@ def train_vae(
                 target_kl=tc.target_kl,
                 noise_aug_sigma=aug_sigma,
                 recon_weights=recon_weights,
+                word_dropout=tc.word_dropout,
+                mask_token_id=word_dropout_id,
             )
             loss = loss_dict["total"] / tc.grad_accum_steps
             loss.backward()
@@ -401,6 +431,20 @@ def train_vae(
                     tokenizer=tokenizer,
                 )
                 ema.restore()
+                # Pull decoded samples out of the metrics dict and log them as a
+                # W&B table so they don't leak into the scalar metric logging.
+                samples = val_metrics.pop("_samples", None)
+                if samples:
+                    log_wandb_table(
+                        "val/samples",
+                        columns=["gold", "prediction", "answerable", "f1"],
+                        rows=samples,
+                        step=global_step,
+                    )
+                    # Also surface a couple in the console log for quick sanity.
+                    for gold, pred, ans, f1 in samples[:5]:
+                        logger.info("  sample [ans=%s f1=%.2f] gold=%r pred=%r",
+                                    ans, f1, gold, pred)
                 final_metrics = val_metrics
                 logger.info(
                     "step=%d  val_loss=%.4f  recon=%.4f  kl=%.4f  em=%.3f  f1=%.3f",
@@ -489,6 +533,7 @@ def train_vae(
             target_kl=tc.target_kl, tokenizer=tokenizer,
         )
         ema.restore()
+        final_metrics.pop("_samples", None)
 
     finish_wandb()
     return final_metrics

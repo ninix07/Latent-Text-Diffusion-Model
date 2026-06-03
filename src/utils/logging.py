@@ -79,6 +79,25 @@ def log_wandb(metrics: dict[str, Any], step: int | None = None) -> None:
         logger.warning("wandb.log failed at step %s: %s", step, exc)
 
 
+def log_wandb_table(
+    key: str,
+    columns: list[str],
+    rows: list[list[Any]],
+    step: int | None = None,
+) -> None:
+    """Log a table of rows (e.g. generated samples) to W&B. No-op if inactive."""
+    if not _wandb_ok:
+        return
+    try:
+        table = _wandb.Table(columns=columns, data=rows)
+        if step is None:
+            _wandb.log({key: table})
+        else:
+            _wandb.log({key: table}, step=step)
+    except Exception as exc:
+        logger.warning("wandb table log failed at step %s: %s", step, exc)
+
+
 def finish_wandb() -> None:
     """Finish the current W&B run."""
     global _wandb_ok

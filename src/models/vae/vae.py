@@ -96,9 +96,14 @@ class SequenceVAE(nn.Module):
         token_ids: torch.Tensor,
         z: torch.Tensor,
         mask: torch.Tensor,
+        word_dropout: float = 0.0,
+        mask_token_id: int | None = None,
     ) -> torch.Tensor:
         """Teacher-forced decode: latent z + shifted target → logits."""
-        hidden = self.decoder(token_ids, z, mask)
+        hidden = self.decoder(
+            token_ids, z, mask,
+            word_dropout=word_dropout, mask_token_id=mask_token_id,
+        )
         return self.output_head(hidden)
 
     def forward(
@@ -110,6 +115,8 @@ class SequenceVAE(nn.Module):
         target_kl: float | None = None,
         noise_aug_sigma: float = 0.0,
         recon_weights: torch.Tensor | None = None,
+        word_dropout: float = 0.0,
+        mask_token_id: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """Full forward pass (teacher-forced).
 
@@ -139,7 +146,10 @@ class SequenceVAE(nn.Module):
         # Pass the REAL mask so the decoder properly masks padding (Bug 2).
         # The causal architecture prevents the decoder from exploiting mask
         # boundaries because it can only see previous positions.
-        logits = self.decode(token_ids, z_decode, mask)
+        logits = self.decode(
+            token_ids, z_decode, mask,
+            word_dropout=word_dropout, mask_token_id=mask_token_id,
+        )
         total, recon, kl = compute_vae_loss(
             logits, token_ids, mask, mu, log_var, beta, free_bits, target_kl,
             recon_weights=recon_weights,

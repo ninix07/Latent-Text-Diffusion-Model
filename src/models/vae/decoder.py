@@ -197,6 +197,8 @@ class VAEDecoder(nn.Module):
         token_ids: torch.Tensor,
         z: torch.Tensor,
         mask: torch.Tensor,
+        word_dropout: float = 0.0,
+        mask_token_id: int | None = None,
     ) -> torch.Tensor:
         """Teacher-forced decode: predict each token from previous tokens + z.
 
@@ -205,6 +207,17 @@ class VAEDecoder(nn.Module):
         token_ids : Tensor (B, L) — target answer tokens.
         z         : Tensor (B, K, latent_dim) — sequence of latent vectors.
         mask      : Tensor (B, L) — 1 for real tokens, 0 for padding.
+        word_dropout : float
+            Probability of corrupting each teacher-forced *input* token by
+            replacing it with ``mask_token_id`` (training only). The decoder
+            then cannot lean on the previous ground-truth token and is forced
+            to read the latent z to predict the target — the standard cure for
+            latent bypass / posterior collapse in text VAEs (Bowman et al. 2016).
+            Targets are unchanged, so the reconstruction objective is identical;
+            only the decoder's *inputs* are degraded. ``0.0`` disables it.
+        mask_token_id : int or None
+            Token id used as the corruption symbol. Required when
+            ``word_dropout > 0``.
 
         Returns
         -------
@@ -214,7 +227,15 @@ class VAEDecoder(nn.Module):
         K = self.num_latent_tokens
 
         # Shift right: [<start>, tok_0, …, tok_{L-2}]
-        tok_emb = self.token_embedding(token_ids[:, :-1])  # (B, L-1, D)
+        in_ids = token_ids[:, :-1]
+        if self.training and word_dropout > 0.0 and mask_token_id is not None:
+            # Corrupt a random subset of the input tokens (NOT the targets).
+            # Only real (non-pad) positions are eligible so we don't waste
+            # corruption budget on padding the decoder already ignores.
+            in_mask = mask[:, :-1] > 0
+            drop = (torch.rand_like(in_ids, dtype=torch.float) < word_dropout) & in_mask
+            in_ids = torch.where(drop, torch.full_like(in_ids, mask_token_id), in_ids)
+        tok_emb = self.token_embedding(in_ids)  # (B, L-1, D)
         start = self.start_embed.expand(B, -1, -1)  # (B, 1, D)
         dec_input = torch.cat([start, tok_emb], dim=1)  # (B, L, D)
         dec_input = dec_input + self.pe[:, :L, :]

@@ -68,9 +68,17 @@ def compute_vae_loss(
     # while the batch mean stays above the free-bits floor (Kingma 2016).
     # mean(dim=0) → (K, D); .sum() then collapses K and D into one scalar.
     kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, K, D)
-    if free_bits > 0.0: 
-        kl_per_dim = kl_raw.mean(dim=0)  # Average over the batch first
-        kl = kl_per_dim.clamp(min=free_bits).sum() # Then clamp
+    if free_bits > 0.0:
+        # Per-SAMPLE per-dim clamp BEFORE the batch mean (Kingma 2016 free bits).
+        # The batch-mean-then-clamp variant let individual samples/dims fall
+        # below the floor (their gradient is only zeroed at the aggregate), so
+        # the optimizer drove the *true* KL toward zero whenever the decoder
+        # ignored z — the partial posterior collapse observed here (true_kl
+        # falling 73→24 while recon stayed floored). Clamping per sample enforces
+        # a hard ≥ free_bits floor on every (b,k,d): true_kl cannot collapse
+        # below free_bits * K * D, keeping the latent alive long enough for the
+        # decoder to learn to use it.
+        kl = kl_raw.clamp(min=free_bits).mean(dim=0).sum()
     else:
         kl = kl_raw.mean(dim=0).sum()
 

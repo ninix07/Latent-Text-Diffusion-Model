@@ -82,6 +82,12 @@ class VAETrainingConfig:
     # to NULL examples (answerable examples keep weight 1.0). Further rebalances
     # the decoder's gradient toward answer text without removing nulls — they
     # still pass through the encoder so their latents stay structured for export.
+    word_dropout: float = 0.4  # Probability of replacing each teacher-forced
+    # decoder INPUT token with [MASK] during training (Bowman et al. 2016).
+    # Forces the decoder to read the latent z instead of copying the previous
+    # ground-truth token — the cure for the latent-bypass / posterior-collapse
+    # that floored reconstruction (recon stuck ~33, true_kl falling, gen ~empty).
+    # Targets are unchanged. 0.0 disables. ~0.3-0.5 is the usual sweet spot.
 
 
 @dataclass(frozen=True)

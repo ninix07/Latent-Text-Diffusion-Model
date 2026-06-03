@@ -44,6 +44,10 @@ vae_training:
   # (SQuAD v2 is ~33% null; the old balanced sampler inflated it to 50%). Export,
   # classifier and diffusion still use the FULL dataset — this only affects VAE training.
   null_loss_weight: 0.1 # Downweight NULL examples' reconstruction loss (answerable = 1.0)
+  word_dropout: 0.4 # Prob of replacing each teacher-forced decoder INPUT token with
+  # [MASK] during training (Bowman 2016). Forces decoder to use latent z instead of
+  # copying the previous gold token — fixes latent bypass / posterior collapse
+  # (recon was stuck ~33, true_kl falling, generation ~empty). Targets unchanged.
 
 quality_gate:
   min_recon_accuracy: 0.85 # Min token-level reconstruction accuracy
