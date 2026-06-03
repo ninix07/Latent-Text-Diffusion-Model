@@ -68,8 +68,9 @@ def compute_vae_loss(
     # while the batch mean stays above the free-bits floor (Kingma 2016).
     # mean(dim=0) → (K, D); .sum() then collapses K and D into one scalar.
     kl_raw = -0.5 * (1 + log_var - mu.pow(2) - log_var.exp())  # (B, K, D)
-    if free_bits > 0.0:
-        kl = kl_raw.clamp(min=free_bits).mean(dim=0).sum()
+    if free_bits > 0.0: 
+        kl_per_dim = kl_raw.mean(dim=0)  # Average over the batch first
+        kl = kl_per_dim.clamp(min=free_bits).sum() # Then clamp
     else:
         kl = kl_raw.mean(dim=0).sum()
 

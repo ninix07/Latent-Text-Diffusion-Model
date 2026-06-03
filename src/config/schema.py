@@ -50,7 +50,8 @@ class VAETrainingConfig:
     patience: int = 5  # Early stopping patience (val checks)
     warmup_steps: int = 500  # LR scheduler warmup
     weight_decay: float = 0.01  # AdamW weight decay
-    grad_clip_max_norm: float = 1.0  # Gradient clipping threshold
+    grad_clip_max_norm: float = 5.0  # Gradient clipping threshold (1.0 throttled
+    # the ~25M-param model's effective LR ~15-20x → underfit; see vae/default.yaml)
     grad_accum_steps: int = 1  # Gradient accumulation steps
     beta_start: float = 0.01  # KL weight at start
     beta_end: float = 1.0  # KL weight at end
