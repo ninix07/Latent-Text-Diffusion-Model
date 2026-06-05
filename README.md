@@ -81,6 +81,52 @@ Override any parameter via CLI with dot notation:
 --vae_arch.latent_dim 128 --langvae.decoder_model gpt2
 ```
 
+### Choosing the VAE training dataset
+
+The **SequenceVAE** stage can train on either of two corpora, selected by
+`vae_training.dataset`:
+
+| Value | Corpus | Reconstruction target | NULLs |
+|-------|--------|------------------------|-------|
+| `squad_v2` *(default)* | SQuAD v2 | short answer spans (1–5 words) | yes (~33%) |
+| `entailment_bank` | EntailmentBank (`nguyen-brat/entailment_bank` HF mirror) | full declarative *explanatory* sentences (`cot`), deduped, 99/1 split | no |
+
+The `entailment_bank` option follows the LangVAE paper
+([arXiv:2505.00004](https://arxiv.org/abs/2505.00004)): all explanatory sentences,
+deduplicated, one sentence per example, latent dim 128.
+
+Switch via the config file:
+
+```yaml
+# configs/vae/default.yaml
+vae_training:
+  dataset: entailment_bank   # default: squad_v2
+```
+
+…or per-run on the CLI:
+
+```bash
+python -m src.pipelines.train_vae \
+    --config configs/base.yaml configs/vae/default.yaml \
+    --vae_training.dataset entailment_bank
+```
+
+**What changes automatically when `entailment_bank` is set** (no other edits needed):
+- Data loading switches to the EntailmentBank sentence pool (downloaded from the HF
+  mirror on first run).
+- NULL handling is a no-op — `null_train_fraction`, `null_loss_weight`, and the
+  answerability-balanced sampler are ignored (EntailmentBank has no unanswerable
+  examples). Validation `has_ans_em` / `has_ans_f1` / `has_ans_bleu` therefore equal
+  the overall metrics.
+
+**Scope / caveats:**
+- The dataset flag affects the **VAE stage only**. EntailmentBank sentences carry no
+  question+context conditioning and no answerability label, so the downstream stages
+  (Export → Diffusion → Null Classifier → Evaluate) remain SQuAD-based. Use
+  `entailment_bank` for studying the VAE latent space in isolation, not the full QA
+  pipeline.
+- LangVAE (`train_langvae.py`) is independent and still trains on SQuAD answer texts.
+
 ---
 
 ## Training — SequenceVAE path
@@ -92,7 +138,7 @@ python -m src.pipelines.train_vae \
     --config configs/base.yaml configs/vae/default.yaml
 ```
 
-Trains encoder + decoder from scratch on SQuAD answer spans. Checkpoint saved to `checkpoints/vae_best.pt`. Logs to wandb project `latent-diffusion-text-vae`.
+Trains encoder + decoder from scratch on SQuAD answer spans (the default; see [Choosing the VAE training dataset](#choosing-the-vae-training-dataset) to train on EntailmentBank instead). Checkpoint saved to `checkpoints/vae_best.pt`. Logs to wandb project `latent-diffusion-text-vae`.
 
 **Metrics tracked:** `train/loss`, `train/recon`, `train/kl`, `train/beta`, `latent/active_dims`, `latent/mu_mean`, `latent/z_std`
 

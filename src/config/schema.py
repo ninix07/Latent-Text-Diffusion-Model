@@ -33,11 +33,18 @@ class VAEArchConfig:
 
     latent_dim: int = 128  # Latent space dimensionality
     embed_dim: int = 768  # Internal embedding dimension
-    num_layers: int = 4  # Transformer layers in encoder/decoder
+    num_layers: int = 4  # Transformer layers in the ENCODER (and decoder when
+    # ``decoder_num_layers`` is None)
+    decoder_num_layers: Optional[int] = None  # Transformer layers in the DECODER.
+    # None falls back to ``num_layers``. Set BELOW num_layers (e.g. encoder 4 /
+    # decoder 2) to deliberately weaken the autoregressive decoder so it cannot
+    # model p(answer) from teacher-forced tokens alone and is forced to read z —
+    # the cure for powerful-decoder latent bypass (high free_bits-propped KL but
+    # generation collapses to NULL; val EM/F1 pinned at the null rate).
     num_heads: int = 8  # Attention heads
     dropout: float = 0.1  # Dropout rate
     max_answer_len: int = 50  # Max answer token length
-    num_latent_tokens: int = 8  # Pseudo-tokens for latent KV injection
+    num_latent_tokens: int = 4  # Pseudo-tokens for latent KV injection
     latent_pos_inject: bool = False  # Add a K-pooled projection of z to every
     # decoder token input (not just the KV prefix). Stops the causal decoder
     # from bypassing z via teacher forcing — the main posterior-collapse cure.
@@ -50,6 +57,11 @@ class VAEArchConfig:
 class VAETrainingConfig:
     """VAE training hyperparameters."""
 
+    dataset: str = "squad_v2"  # VAE training corpus selector. "squad_v2" =
+    # reconstruct SQuAD v2 answer texts (short, with NULLs). "entailment_bank" =
+    # reconstruct EntailmentBank explanatory sentences (full declarative sentences,
+    # no NULLs), matching the LangVAE paper (arXiv:2505.00004): all explanatory
+    # ("cot") sentences, deduped, 99/1 split, one sentence per example.
     learning_rate: float = 5e-4  # Peak learning rate (1e-4 was ~10x too low →
     # recon stuck ~20; 5e-4 lets the decoder learn to read the latent)
     batch_size: int = 64  # Training batch size
@@ -61,24 +73,25 @@ class VAETrainingConfig:
     # the ~25M-param model's effective LR ~15-20x → underfit; see vae/default.yaml)
     grad_accum_steps: int = 1  # Gradient accumulation steps
     beta_start: float = 0.01  # KL weight at start
-    beta_end: float = 1.0  # KL weight at end
+    beta_end: float = 0.5  # KL weight at end. 1.0 crushed the decoder at the
+    # cyclical β peaks — val EM/F1 dipped to 0 exactly when β hit 1.0. Cap at 0.5.
     beta_warmup_steps: int = 10000  # Steps to ramp beta
     beta_schedule: str = "cyclical"  # "monotonic" or "cyclical"
     beta_cycles: int = 40  # Number of cycles (only used with "cyclical")
     target_kl: Optional[float] = (
-        None  # KL hinge target (None = disabled). With K*D≈1024 latent dims a
+        None  # KL hinge target (None = disabled). With K*D≈512 latent dims a
         # finite value like 20.0 drives the posterior toward ~0.02 nats/dim,
         # i.e. near-collapse. Rely on cyclical annealing + free_bits instead.
     )
     beta_cycle_ratio: float = 0.5  # Fraction of cycle spent ramping
-    free_bits: float = 0.3  # Per-dim KL ALLOWANCE the encoder may use penalty-free
-    # (target-rate VAE). 0.02 was the actual root cause of the collapse: the KL
-    # penalty pinned the posterior at the floor before the decoder learned to read
-    # z, so z stayed ~noise and the decoder ignored it (gen = "the the the").
-    # Controlled sweep on the reproducing regime: 0.02→7/128 unique gens (dead),
-    # 0.1→52, 0.3→113, 0.5→122. 0.3 (≈K*D*0.3 nats floor) keeps the latent alive
-    # without letting KL run away (β=0 gave true_kl~1400). Watch train/true_kl: it
-    # should sit well above K*D*0.02 and NOT decay toward the floor.
+    free_bits: float = 0.0625  # Per-dim KL ALLOWANCE the encoder may use penalty-
+    # free (target-rate VAE). 0.02 collapsed (KL pinned at floor before the decoder
+    # learned to read z); 0.3 over-corrected — the floor (K*D*0.3 ≈ 307 over 1024
+    # dims) PROPPED train/kl to ~308 artificially while the powerful decoder bypassed
+    # z entirely (gen → NULL, val EM/F1 stuck at the null rate, true_kl decaying).
+    # 0.0625 over K*D=512 (num_latent_tokens 8→4) floors KL at ~32 nats — a real
+    # target rate, not a prop — now safe because the decoder is also weakened
+    # (decoder_num_layers). Watch train/true_kl AND val EM/F1: KL alive ≠ z used.
     ema_decay: float = 0.999  # EMA decay rate for validation weights
     val_every_n_steps: int = 500  # Validation frequency (steps)
     noise_aug_sigma: float = 0.0  # Extra Gaussian noise std added to z before
@@ -93,12 +106,12 @@ class VAETrainingConfig:
     # to NULL examples (answerable examples keep weight 1.0). Further rebalances
     # the decoder's gradient toward answer text without removing nulls — they
     # still pass through the encoder so their latents stay structured for export.
-    word_dropout: float = 0.4  # Probability of replacing each teacher-forced
+    word_dropout: float = 0.1  # Probability of replacing each teacher-forced
     # decoder INPUT token with [MASK] during training (Bowman et al. 2016).
-    # Forces the decoder to read the latent z instead of copying the previous
-    # ground-truth token — the cure for the latent-bypass / posterior-collapse
-    # that floored reconstruction (recon stuck ~33, true_kl falling, gen ~empty).
-    # Targets are unchanged. 0.0 disables. ~0.3-0.5 is the usual sweet spot.
+    # free_bits (=0.3) is the actual collapse cure — isolation showed free_bits
+    # alone recovers reconstruction (acc 0.90) while word_dropout=0.5 HURT it
+    # (acc 0.38, slower convergence). Kept small (0.1) as mild robustness for the
+    # imperfect diffusion-sampled latents at inference. 0.0 disables.
     bow_loss_weight: float = 0.0  # Weight on the bag-of-words auxiliary loss
     # (requires vae_arch.use_bow_head). Added directly to the total loss like a
     # second reconstruction term; uses the same per-sequence-sum reduction so

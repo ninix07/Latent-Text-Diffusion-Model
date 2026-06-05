@@ -88,3 +88,59 @@ def compute_bleu(
 
     result = sacrebleu.corpus_bleu(predictions, [references])
     return {"bleu": result.score}
+
+
+def compute_bleu_multiref(
+    predictions: list[str],
+    references: list[list[str]],
+) -> dict:
+    """Corpus-level multi-reference BLEU-4 via nltk (no sacrebleu dependency).
+
+    Tokenizes with the SQuAD ``normalize_answer`` (lowercase, strip articles /
+    punctuation) so the score is consistent with the EM/F1 reported alongside
+    it. Uses corpus-level n-gram aggregation with method-1 smoothing — SQuAD
+    answers are 1-5 words, so per-sentence BLEU-4 is almost always 0 (no
+    4-grams); aggregating counts across the whole answerable set is the only
+    way the metric carries signal.
+
+    Parameters
+    ----------
+    predictions : list[str]
+        Model-generated texts.
+    references : list[list[str]]
+        Per-prediction list of acceptable gold answers (SQuAD multi-ref).
+
+    Returns
+    -------
+    dict
+        Keys: bleu (float 0-100), or {} on import failure / no data.
+    """
+    try:
+        from nltk.translate.bleu_score import SmoothingFunction, corpus_bleu
+    except ImportError:
+        warnings.warn(
+            "nltk package not found. Install with: uv add nltk",
+            ImportWarning,
+            stacklevel=2,
+        )
+        return {}
+
+    from .normalize import normalize_answer
+
+    hyps: list[list[str]] = []
+    refs: list[list[list[str]]] = []
+    for pred, golds in zip(predictions, references):
+        pred_toks = normalize_answer(pred).split()
+        gold_toks = [normalize_answer(g).split() for g in golds if g.strip()]
+        if not gold_toks:
+            continue
+        hyps.append(pred_toks)
+        refs.append(gold_toks)
+
+    if not hyps:
+        return {}
+
+    score = corpus_bleu(
+        refs, hyps, smoothing_function=SmoothingFunction().method1
+    )
+    return {"bleu": score * 100.0}
